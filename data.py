@@ -100,21 +100,24 @@ if __name__ == "__main__":
 
         # Generate clock images at different times
         for hour in range(12):  # 12-hour format
-            for minute in range(0, 60, 1):  # Every 5 minutes
-                filename = f"clock_{hour:02d}_{minute:02d}.png"
-                save_path = os.path.join(IMG_DIR, filename)
-                draw_clock(hour, minute, save_path)
+            for minute in range(0, 60, 1):  # Minutes
+                for second in range(0, 60, 15):  # Every 15 seconds
+                  minute_fraction = minute + second / 60
 
-                # Compute single number label (time in minutes past midnight)
-                time_in_minutes = hour * 60 + minute
+                  filename = f"clock_{hour:02d}_{minute:02d}_{second:02d}.png"
+                  save_path = os.path.join(IMG_DIR, filename)
+                  draw_clock(hour, minute_fraction, save_path)
 
-                # normalize minute, hour, and total minutes
-                hour_label = hour / 12
-                minute_label = minute / 60
-                time_in_minutes_label = time_in_minutes / (12 * 60)
+                  # Compute single number label (time in minutes past midnight)
+                  time_in_minutes = hour * 60 + minute + second / 60
 
-                # Write to CSV
-                writer.writerow([filename, hour_label, minute_label, time_in_minutes_label])
+                  # normalize minute, hour, and total minutes
+                  hour_label = hour / 12
+                  minute_label = minute_fraction / 60
+                  time_in_minutes_label = time_in_minutes / (12 * 60)
+
+                  # Write to CSV
+                  writer.writerow([filename, hour_label, minute_label, time_in_minutes_label])
 
     print(f"Clock dataset saved in '{IMG_DIR}', resized to {IMG_SIZE}x{IMG_SIZE}")
     print(f"Labels saved in '{LABELS_FILE}'")

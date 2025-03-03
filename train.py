@@ -18,7 +18,7 @@ if __name__ == "__main__":
   unsupervised_loader = DataLoader(unsupervised_dataset, batch_size=BATCH_SIZE, shuffle=True)
 
   HIDDEN_UNITS = 2
-  LEARNING_RATE = 0.0002
+  LEARNING_RATE = 0.001
 
   ae = DeepAutoencoder(n_hidden=HIDDEN_UNITS)
   criterion = nn.MSELoss()
