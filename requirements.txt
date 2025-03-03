@@ -4,3 +4,5 @@ torch
 torchvision
 pillow
 pandas
+scikit-learn
+tqdm
