@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 
-# 
 class DeepAutoencoder(nn.Module):
     def __init__(self, n_hidden):
         super(DeepAutoencoder, self).__init__()
