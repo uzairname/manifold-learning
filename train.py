@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torchvision import transforms
 from torch.utils.data import DataLoader
 import pandas as pd
+import os
 
 from models import DeepAutoencoder
 from data import IMG_DIR, IMG_SIZE, ClockDataset
@@ -15,7 +16,6 @@ if __name__ == "__main__":
   # Load unsupervised dataset for autoencoder
   unsupervised_dataset = ClockDataset(img_dir=IMG_DIR, supervised=False)
   unsupervised_loader = DataLoader(unsupervised_dataset, batch_size=BATCH_SIZE, shuffle=True)
-
 
   HIDDEN_UNITS = 2
   LEARNING_RATE = 0.0002
@@ -39,5 +39,11 @@ if __name__ == "__main__":
           optimizer.step()
 
       print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+
+  # Save the trained autoencoder model
+  os.makedirs('models', exist_ok=True)
+  torch.save(ae.state_dict(), 'models/ae.pth')
+  print('Autoencoder model saved to ae.pth')
 
 

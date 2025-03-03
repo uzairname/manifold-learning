@@ -1,71 +1,55 @@
 import torch
 import torch.nn as nn
 
-# Autoencoder for 1x128x128 inputs
+
+# 
 class DeepAutoencoder(nn.Module):
-  def __init__(self, n_hidden):
-    super(DeepAutoencoder, self).__init__()
-    
-    # Encoder: Convolutional layers for feature extraction
-    self.encoder_conv = nn.Sequential(
-      nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.MaxPool2d(2, 2),
-      nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.MaxPool2d(2, 2),
-      nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.MaxPool2d(2, 2),
-    )
+    def __init__(self, n_hidden):
+        super(DeepAutoencoder, self).__init__()
+        
+        # Encoder
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, stride=2, padding=1),  # 64x64 → 32x32
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Dropout(0.2),
 
-    self.encoder_fc = nn.Sequential(
-        nn.Linear(512 * 256, 256),
-        nn.ReLU(),
-        nn.Linear(256, 128),
-        nn.ReLU(),
-        nn.Linear(128, n_hidden)  # Predicting hour and minute
-    )
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # 32x32 → 16x16
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Dropout(0.3),
 
-    # Decoder: Fully connected layers for reconstruction
-    self.decoder_fc = nn.Sequential(
-        nn.Linear(n_hidden, 128),
-        nn.ReLU(),
-        nn.Linear(128, 256),
-        nn.ReLU(),
-        nn.Linear(256, 512 * 256)
-    )
+            nn.Flatten(),
+            nn.Linear(64 * 16 * 16, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(0.4),
 
-    # Decoder: Convolutional layers for image reconstruction
-    self.decoder_conv = nn.Sequential(
-      nn.ConvTranspose2d(512, 256, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.Upsample(scale_factor=2),
-      nn.ConvTranspose2d(256, 128, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.Upsample(scale_factor=2),
-      nn.ConvTranspose2d(128, 64, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.Upsample(scale_factor=2),
-      nn.ConvTranspose2d(64, 32, kernel_size=3, stride=1, padding=1),
-      nn.ReLU(),
-      nn.ConvTranspose2d(32, 1, kernel_size=3, stride=1, padding=1)
-    )
+            nn.Linear(256, n_hidden)  # Bottleneck
+        )
+        
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(n_hidden, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Linear(256, 64 * 16 * 16),
+            nn.ReLU(),
+            nn.Unflatten(1, (64, 16, 16)),
 
-  def forward(self, x):
-    x = self.encoder_conv(x)
-    x = torch.flatten(x, start_dim=1)  # Flatten the output
-    latent = self.encoder_fc(x)  # Encode to latent space
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            
+            nn.ConvTranspose2d(32, 1, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.Sigmoid()  # Output in range [0,1]
+        )
 
-    x = self.decoder_fc(latent)  # Decode from latent space
-    x = x.view(-1, 512, 16, 16)  # Reshape to match decoder input
-    x = self.decoder_conv(x)  # Decode to image space
-    reconstructed = torch.sigmoid(x)  # Apply sigmoid to ensure pixel values are between 0 and 1
-    return reconstructed, latent
+    def forward(self, x):
+        latent = self.encoder(x)
+        reconstructed = self.decoder(latent)
+        return reconstructed, latent
+
 
 
 # Model 1: Predict (hour, minute) as 2D labels

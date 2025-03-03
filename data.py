@@ -12,7 +12,7 @@ import csv
 IMG_DIR = "data/clock_images"
 
 # Define the fixed output size
-IMG_SIZE = 128
+IMG_SIZE = 64
 
 LABELS_FILE = "data/clock_labels.csv"
 
