@@ -29,14 +29,16 @@ def main():
     world_size = dist.get_world_size()
     device = torch.device(f"cuda:{rank}")
 
-    BATCH_SIZE = 32
+    BATCH_SIZE = 64
      # 1 or 2
     HIDDEN_UNITS = 2
     LEARNING_RATE = 0.0005
-    WEIGHT_DECAY = 0.0001
+    WEIGHT_DECAY = 0.001
 
     # Load dataset with DistributedSampler
-    dataset = ClockDataset(supervised=True)
+    # data_size = 2**14
+    data_size=2**23
+    dataset = ClockDataset(len=data_size, supervised=True)
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=sampler, pin_memory=True)
 
@@ -50,41 +52,43 @@ def main():
     # AMP initialization
     scaler = torch.amp.GradScaler()
 
-    num_epochs = 10
-    loss_tensor = None
-    for epoch in tqdm(range(num_epochs), desc=f"Loss: {loss_tensor.item() if loss_tensor is not None else 'N/A'}"):
-        sampler.set_epoch(epoch)  # Ensure shuffling is different each epoch
-        for batch in dataloader:
-            inputs = batch[0]
-            inputs = inputs.to(device)
+    # Training loop
+    t = tqdm(enumerate(dataloader), total=len(dataloader))
+    runnnig_loss = 0
+    for i, batch in t:
+        inputs = batch[0]
+        inputs = inputs.to(device)
 
-            optimizer.zero_grad()
+        optimizer.zero_grad()
 
-            # Forward pass with AMP broadcast for mixed precision
-            with torch.amp.autocast(device_type='cuda'):
-              predicted, _ = model(inputs)
-              loss = criterion(predicted, inputs)
+        # Forward pass with AMP broadcast for mixed precision
+        with torch.amp.autocast(device_type='cuda'):
+          predicted, _ = model(inputs)
+          loss = criterion(predicted, inputs)
 
-            # Backward pass with scaler
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+        # Backward pass with scaler
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         # Synchronize loss across GPUs
         loss_tensor = torch.tensor(loss.item(), device=device)
         dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
         loss_tensor /= world_size  # Average loss across all GPUs
 
-        if rank == 0:
-          print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss_tensor.item():.4f}')
+        runnnig_loss += loss_tensor.item()
+        if i % 16 == 0:
+          t.set_description_str(f"Training... Loss={runnnig_loss / 16:.4f}")
+          runnnig_loss = 0
 
     if rank == 0:
         os.makedirs(MODELS_DIR, exist_ok=True)
         # count number of parameters, to nearest 10^x
         num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         log_params = int(np.log10(num_params))
-        path = os.path.join(MODELS_DIR, f'ae-{HIDDEN_UNITS}-e{num_epochs}-p{log_params}.pth')
-        torch.save(model.module.state_dict(), path)
+        log_data_size = int(np.log10(np.max((data_size, 1))))
+        path = os.path.join(MODELS_DIR, f'ae-{HIDDEN_UNITS}-d{log_data_size}-p{log_params}.pt')
+        torch.save(model.module, path)
 
         print(f'AE model saved to {path}')
 

@@ -10,7 +10,7 @@ import random
 # Define the fixed output size
 IMG_SIZE = 128
 
-
+phi = (1 + np.sqrt(5)) / 2
 
 class ClockGenerator:
     def __init__(self, img_size=IMG_SIZE, device='cuda'):
@@ -30,7 +30,7 @@ class ClockGenerator:
         self.radius = torch.hypot(x, y)  # Equivalent to sqrt(x^2 + y^2)
 
         # Precomputed clock face (remains the same for every image)
-        self.clock_face = (self.radius <= 0.95)
+        self.clock_face = (self.radius <= 0.99)
         self.outside_clock = (self.radius > 1).float()  # 1 outside circle, 0 inside
 
     def generate_clock_tensor(self, hour, minute):
@@ -76,48 +76,6 @@ class ClockGenerator:
         clock_tensor = self.outside_clock + self.clock_face - (hour_hand + minute_hand)
         clock_tensor = torch.clamp(clock_tensor, 0, 1)  # Ensure values in [0,1]
         return clock_tensor.unsqueeze(0)  # Add channel dimension (1, H, W)
-    
-
-
-import torch
-
-def add_procedural_noise(image, min_freq=-8, max_freq=8, noise_scale=0.1):
-    """
-    Adds procedural noise to an image using multiple frequency bands.
-
-    Args:
-        image (torch.Tensor): Input image tensor of shape (C, H, W).
-        min_freq (int): Minimum exponent for frequency range (default -8).
-        max_freq (int): Maximum exponent for frequency range (default 8).
-        noise_scale (float): Scaling factor for noise strength.
-
-    Returns:
-        torch.Tensor: Noisy image of the same shape as `image`.
-    """
-    # Ensure image is a float tensor
-    image = image.float()
-
-    # Generate noise at multiple frequency bands
-    noise_frequencies = 2**torch.arange(min_freq, max_freq, device=image.device, dtype=torch.float32)
-
-    # Initialize noise tensor
-    noise = torch.zeros_like(image)
-
-    # Loop over frequencies and apply sinusoidal noise
-    for freq in noise_frequencies:
-        # Generate per-pixel phase shift
-        phase_shift = torch.rand(1, 1, *image.shape[1:], device=image.device)
-
-        # Generate sinusoidal noise pattern
-        sin_noise = torch.sin(2 * np.pi * freq * phase_shift)
-
-        # Apply noise modulation with random intensity
-        noise += noise_scale * sin_noise * torch.randn_like(image)
-
-    # Add noise to the image
-    noisy_image = torch.clamp(image + noise, 0, 1)  # Keep values in [0,1]
-
-    return noisy_image
 
 
 class ClockDataset(Dataset):
@@ -144,7 +102,7 @@ class ClockDataset(Dataset):
 
     def __getitem__(self, idx):
         # Get time of day in minutes based on index
-        day_minutes = (idx * np.pi) % (12 * 60)
+        day_minutes = (idx * phi * 12*60) % (12 * 60)
 
         # Convert to hour and minute
         hour = int(day_minutes // 60)
@@ -172,9 +130,8 @@ class ClockDataset(Dataset):
             # Apply translation
             clock_tensor = TF.affine(clock_tensor, angle=0, translate=(tx, ty), scale=1.0, shear=0, fill=1.0)
 
-            # Apply Procedural noise
-            clock_tensor = add_procedural_noise(clock_tensor, noise_scale=self.noise_std)
-
+            # Add Gaussian noise
+            clock_tensor = clock_tensor + torch.randn_like(clock_tensor) * self.noise_std
             clock_tensor = torch.clamp(clock_tensor, 0, 1)
 
         if self.supervised:
