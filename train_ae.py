@@ -2,37 +2,37 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
+import torch.multiprocessing as mp
 
 import numpy as np
 import os
 
-from models import DeepAutoencoder, Autoencoder
+from models import Autoencoder
 from datasets.clock import IMG_SIZE, ClockDataset
 from tqdm import tqdm
 from config import MODELS_DIR
+import io
+import logging
 
+from multiprocessing_utils import process_group_setup
 
-os.environ["OMP_NUM_THREADS"] = "1"
 
 def train_ae(
+    rank,
     img_size=IMG_SIZE, 
     data_size=2**20, 
     hidden_units=2,
     batch_size=64,
     learning_rate=1e-4,
-    weight_decay=0.001
+    weight_decay=0.001,
+    checkpoint_every=None,
+    tag="models"
 ):
     torch.manual_seed(42)
-
-    print("available gpus", torch.cuda.device_count())
-    
-    # Initialize process group for distributed training
-    dist.init_process_group(backend="nccl")
-
-    rank = dist.get_rank()
+  
+    # rank = dist.get_rank()
     world_size = dist.get_world_size()
     device = torch.device(f"cuda:{rank}")
-
 
     # Load dataset with DistributedSampler
     dataset = ClockDataset(len=data_size, img_size=img_size, supervised=True, augment=False)
@@ -51,9 +51,9 @@ def train_ae(
     scaler = torch.amp.GradScaler()
 
     # Training loop
-    t = tqdm(enumerate(dataloader), total=len(dataloader))
-    runnnig_loss = 0
-    for i, batch in t:
+    # t = tqdm(enumerate(dataloader), total=len(dataloader), disable=(rank != 0))
+    running_loss = 0
+    for i, batch in enumerate(dataloader):
         inputs = batch[0]
         inputs = inputs.to(device)
 
@@ -74,42 +74,70 @@ def train_ae(
         dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
         loss_tensor /= world_size  # Average loss across all GPUs
 
-        runnnig_loss += loss_tensor.item()
-        if i % 16 == 0:
-          t.set_description_str(f"Training AE... Loss={runnnig_loss / 16:.4f}")
-          t.set_postfix(batches=f"{i}/{len(dataloader)}", gpus=f"{world_size}")
-          runnnig_loss = 0
+        running_loss += loss_tensor.item()
+        if rank == 0 and (i + 1) % 16 == 0:
+            avg_loss = running_loss / 16
+            # t.set_description_str(f"Training AE... Loss={avg_loss:.4f}")
+            # t.set_postfix(batches=f"{i+1}/{len(dataloader)}", gpus=f"{world_size}")
+            tqdm.write(f"Training AE... Loss={avg_loss:.4f} | Batches {i+1}/{len(dataloader)} | GPUs {world_size}")
+            running_loss = 0  # Reset loss counter
+
+        # save checkpoint
 
     if rank == 0:
         os.makedirs(MODELS_DIR, exist_ok=True)
-        # Record log of n params and data size, to nearest 2^x
-        num_params = sum(p.numel() for p in ddp_model.parameters() if p.requires_grad)
-        log_params = int(np.log2(num_params))
+        # Record log of data size.
         log_data_size = int(np.log2(np.max((data_size, 1))))
-        path = os.path.join(MODELS_DIR, f'ae-{hidden_units}-d{log_data_size}-p{log_params}-i{img_size}.pt')
 
-        # Save the model using TorchScript
-
+        os.makedirs(os.path.join(MODELS_DIR, tag), exist_ok=True)
+        path = os.path.join(MODELS_DIR, tag, f'ae-{hidden_units}-i{img_size}-d{log_data_size}.trace.pt')
+        
+        # Save the model using TorchScript trace
         # Unwrap from DDP
-        torch.save(ddp_model.module.state_dict(), "temp.pth")
-        state_dict = torch.load("temp.pth")
+        temp = io.BytesIO()
+        torch.save(ddp_model.module.state_dict(), temp)
+        temp.seek(0)
+        state_dict = torch.load(temp)
         model_copy = Autoencoder(hidden_units=hidden_units, input_dim=img_size).to(device)
         model_copy.load_state_dict(state_dict)
 
-        # Script and save the model
-        scripted_model = torch.jit.script(model_copy)
+        # Trace and save the model
+        model_copy.eval()
+        scripted_model = torch.jit.trace(model_copy, torch.randn(1, 1, img_size, img_size).to(device))
         torch.jit.save(scripted_model, path)
 
-        print(f'AE model saved to {path}')
+        logging.info(f'AE model saved to {path}')
 
-    dist.destroy_process_group()
+def train_ae_process(rank, world_size):
+    
+    process_group_setup(rank, world_size)
+
+    try:
+      train_ae(
+          rank,
+          img_size=64,
+          data_size=2**14,
+          hidden_units=2,
+          tag='small-autoencoder'
+      )
+    except Exception as e:
+      logging.error(f"Error in rank {rank}:")
+      logging.error(e, exc_info=True)
+    finally:
+      dist.barrier()
+      dist.destroy_process_group()
 
 
 if __name__ == "__main__":
-    train_ae(
-      img_size=256,
-      data_size=2**23,
-      hidden_units=2
+    
+    world_size = torch.cuda.device_count()
+    print("available gpus:", world_size)
+
+    mp.spawn(
+        train_ae_process,
+        args=(world_size,),
+        nprocs=world_size,
+        join=True
     )
 
 

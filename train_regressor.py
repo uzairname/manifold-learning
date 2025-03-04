@@ -7,15 +7,19 @@ import torch.nn.functional as F
 import numpy as np
 import os
 
-from models.clock_models import DeepMultiHeadRegressor
+from models import DeepMultiHeadRegressor
 from datasets.clock import IMG_SIZE, ClockDataset
 from tqdm import tqdm
 from config import MODELS_DIR
 
-
 os.environ["OMP_NUM_THREADS"] = "1"
 
-def train_clock_regressor(img_size=IMG_SIZE, data_size=2**20):
+def train_clock_regressor(
+    img_size=IMG_SIZE, 
+    data_size=2**20,
+    out_dim=2, # 1 or 2
+    tag="models"
+):
     torch.manual_seed(42)
     
     # Initialize process group for distributed training
@@ -26,7 +30,6 @@ def train_clock_regressor(img_size=IMG_SIZE, data_size=2**20):
     device = torch.device(f"cuda:{rank}")
 
     BATCH_SIZE = 64
-    OUT_DIM = 2
     LEARNING_RATE = 0.0005
     WEIGHT_DECAY = 0.001
 
@@ -36,7 +39,7 @@ def train_clock_regressor(img_size=IMG_SIZE, data_size=2**20):
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=sampler, pin_memory=True)
 
     # Initialize model and wrap with DistributedDataParallel
-    model = DeepMultiHeadRegressor(out_dim=OUT_DIM, input_dim=IMG_SIZE).to(device)
+    model = DeepMultiHeadRegressor(out_dim=out_dim, input_dim=IMG_SIZE).to(device)
     model = nn.parallel.DistributedDataParallel(model, device_ids=[rank])
 
     criterion = nn.MSELoss()
@@ -50,7 +53,7 @@ def train_clock_regressor(img_size=IMG_SIZE, data_size=2**20):
     runnnig_loss = 0
     for i, batch in t:
         inputs, labels2d, labels1d = batch
-        labels = labels2d if OUT_DIM == 2 else labels1d
+        labels = labels2d if out_dim == 2 else labels1d
 
         inputs, labels = inputs.to(device), labels.to(device)
 
@@ -79,11 +82,13 @@ def train_clock_regressor(img_size=IMG_SIZE, data_size=2**20):
 
     if rank == 0:
         os.makedirs(MODELS_DIR, exist_ok=True)
-        # count number of parameters, to nearest 10^x
-        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        log_params = int(np.log2(num_params))
+        # count data size to nearest 2^x
         log_data_size = int(np.log2(np.max((data_size, 1))))
-        path = os.path.join(MODELS_DIR, f'reg-{OUT_DIM}-d{log_data_size}-p{log_params}-i{img_size}.pt')
+
+        os.makedirs(os.path.join(MODELS_DIR, tag), exist_ok=True)
+        # Save model
+        path = os.path.join(MODELS_DIR, tag, f'ae-{out_dim}-i{img_size}-d{log_data_size}.pt')
+
         torch.save(model.module, path)
 
         print(f'Regression model saved to {path}')

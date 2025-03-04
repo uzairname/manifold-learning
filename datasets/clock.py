@@ -97,7 +97,7 @@ class ClockDataset(Dataset):
 
         # Convert to hour and minute
         total_minutes = time_of_day * 12 * 60 # in [0, 12*60)
-        hour = torch.round(total_minutes / 60) # in [0, 12)
+        hour = torch.floor(total_minutes / 60) # in [0, 12)
         minute = total_minutes % 60 # in [0, 60)
         # total_minutes, hour, and minute are float16 tensors
 
