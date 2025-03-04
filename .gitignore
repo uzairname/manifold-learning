@@ -174,4 +174,5 @@ cython_debug/
 .pypirc
 
 data
-models
+saved_models
+logs

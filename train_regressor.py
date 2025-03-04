@@ -1,25 +1,21 @@
 import torch
 import torch.nn as nn
-from torchvision import transforms
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 import torch.nn.functional as F
 
 import numpy as np
-import pandas as pd
 import os
 
-from models import ClockRegressor, ClockRegressorAE
-from clock_dataset import IMG_SIZE, ClockDataset
-import time
+from models.clock_models import DeepMultiHeadRegressor
+from datasets.clock import IMG_SIZE, ClockDataset
 from tqdm import tqdm
+from config import MODELS_DIR
 
-MODELS_DIR = "models"
-IMG_SIZE = 128
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
-def main():
+def train_clock_regressor(img_size=IMG_SIZE, data_size=2**20):
     torch.manual_seed(42)
     
     # Initialize process group for distributed training
@@ -29,19 +25,18 @@ def main():
     world_size = dist.get_world_size()
     device = torch.device(f"cuda:{rank}")
 
-    BATCH_SIZE = 32
-     # 1 or 2
+    BATCH_SIZE = 64
     OUT_DIM = 2
     LEARNING_RATE = 0.0005
-    WEIGHT_DECAY = 0.0001
+    WEIGHT_DECAY = 0.001
 
     # Load dataset with DistributedSampler
-    dataset = ClockDataset(supervised=True, device='cpu')
+    dataset = ClockDataset(len=data_size, img_size=IMG_SIZE, supervised=True, augment=False)
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=sampler)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=sampler, pin_memory=True)
 
     # Initialize model and wrap with DistributedDataParallel
-    model = ClockRegressor(out_dim=OUT_DIM, input_dim=IMG_SIZE).to(device)
+    model = DeepMultiHeadRegressor(out_dim=OUT_DIM, input_dim=IMG_SIZE).to(device)
     model = nn.parallel.DistributedDataParallel(model, device_ids=[rank])
 
     criterion = nn.MSELoss()
@@ -50,49 +45,58 @@ def main():
     # AMP initialization
     scaler = torch.amp.GradScaler()
 
-    num_epochs = 10
-    loss_tensor = None
-    for epoch in tqdm(range(num_epochs), desc=f"Loss: {loss_tensor.item() if loss_tensor is not None else 'N/A'}"):
-        sampler.set_epoch(epoch)  # Ensure shuffling is different each epoch
-        for batch in dataloader:
-            inputs, labels2d, labels1d = batch
-            inputs, labels2d, labels1d = inputs.to(device), labels2d.to(device), labels1d.to(device)
+    # Training loop
+    t = tqdm(enumerate(dataloader), total=len(dataloader))
+    runnnig_loss = 0
+    for i, batch in t:
+        inputs, labels2d, labels1d = batch
+        labels = labels2d if OUT_DIM == 2 else labels1d
 
-            optimizer.zero_grad()
+        inputs, labels = inputs.to(device), labels.to(device)
 
-            # Forward pass with AMP broadcast for mixed precision
-            with torch.amp.autocast(device_type='cuda'):
-              predicted = model(inputs)
-              loss = criterion(predicted, labels1d if OUT_DIM == 1 else labels2d)
+        optimizer.zero_grad()
 
-            # Backward pass with scaler
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+        # Forward pass with AMP broadcast for mixed precision
+        with torch.amp.autocast(device_type='cuda'):
+          predicted = model(inputs)
+          loss = criterion(predicted, labels)
+
+        # Backward pass with scaler
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         # Synchronize loss across GPUs
         loss_tensor = torch.tensor(loss.item(), device=device)
         dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
         loss_tensor /= world_size  # Average loss across all GPUs
 
-        if rank == 0:
-          print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss_tensor.item():.4f}')
+        runnnig_loss += loss_tensor.item()
+        if i % 16 == 0:
+          t.set_description_str(f"Training Regressor... Loss={runnnig_loss / 16:.4f}")
+          t.set_postfix(batches=f"{(i)}/{len(dataloader)} (1/{world_size})")
+          runnnig_loss = 0
 
     if rank == 0:
         os.makedirs(MODELS_DIR, exist_ok=True)
         # count number of parameters, to nearest 10^x
         num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        log_params = int(np.log10(num_params))
-        path = os.path.join(MODELS_DIR, f'regressor-{OUT_DIM}-e{num_epochs}-p{log_params}.pth')
-        torch.save(model.module.state_dict(), path)
+        log_params = int(np.log2(num_params))
+        log_data_size = int(np.log2(np.max((data_size, 1))))
+        path = os.path.join(MODELS_DIR, f'reg-{OUT_DIM}-d{log_data_size}-p{log_params}-i{img_size}.pt')
+        torch.save(model.module, path)
 
-        print(f'Regressor model saved to {path}')
+        print(f'Regression model saved to {path}')
 
     dist.destroy_process_group()
 
 
 if __name__ == "__main__":
-    main()
+
+    train_clock_regressor(
+       img_size=128, 
+       data_size=2**23
+    )
 
 
 """

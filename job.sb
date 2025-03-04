@@ -1,0 +1,46 @@
+#!/bin/bash --login
+# Job name:
+#SBATCH --job-name=train_ae
+
+# Number of processes.
+# Unless programmed using MPI,
+# most programs using GPU-offloading only need
+# a single CPU-based process to manage the device(s)
+#SBATCH --ntasks=1
+
+# Type and number of GPUs
+# The type is optional.
+#SBATCH --gpus=h200:4
+
+# Total CPU memory
+# All available memory per GPU is allocated by default.
+# Specify "M" or "G" for MB and GB respectively
+#SBATCH --mem=16G
+
+# Wall time
+# Format: "minutes", "hours:minutes:seconds", 
+# "days-hours", or "days-hours:minutes"
+#SBATCH --time=04:00:00
+
+# Mail type
+# e.g., which events trigger email notifications
+#SBATCH --mail-type=ALL
+
+# Mail address
+#SBATCH --mail-user=moham147@msu.edu
+
+# Standard output and error to file
+# %x: job name, %j: job ID
+#SBATCH --output=logs/%x-%j.SLURMout
+
+echo "Runnning script"
+
+# Run our job
+cd /mnt/home/moham147/experiments/manifold-learning
+source .venv/bin/activate
+
+torchrun --nproc_per_node=4 train_ae.py
+
+# Print resource information
+scontrol show job $SLURM_JOB_ID
+js -j $SLURM_JOB_ID
