@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torch.nn.utils import spectral_norm
+import numpy as np
 
 
 class ConvResidualBlock(nn.Module):
@@ -125,7 +126,7 @@ class DeepAutoencoder(nn.Module):
     input_dim: int
     dim_after_conv: int
         
-    def __init__(self, latent_dim=2, img_size=128):
+    def __init__(self, latent_dim=2, img_size=128, **kwargs):
         super(DeepAutoencoder, self).__init__()
 
         self.input_dim = img_size
@@ -210,11 +211,11 @@ class DeepAutoencoder(nn.Module):
 
 # Total parameters ~ 7M for 128 input dim
 class Autoencoder(nn.Module):
-    def __init__(self, hidden_units: int=2, input_dim: int=128):
-        super(ConvInrAutoencoder, self).__init__()
+    def __init__(self, latent_dim: int=2, img_size: int=128, **kwargs):
+        super(Autoencoder, self).__init__()
 
-        self.input_dim = input_dim
-        self.dim_after_conv = (4 * input_dim) // 128  # After 5 Conv Layers
+        self.input_dim = img_size
+        self.dim_after_conv = (4 * img_size) // 128  # After 5 Conv Layers
 
         self.encoder = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=3, stride=2, padding=1),  # 128x128 -> 64x64
@@ -232,11 +233,11 @@ class Autoencoder(nn.Module):
             
             MLPResidualBlock(4 * self.dim_after_conv**2, self.input_dim // 2),
 
-            nn.Linear(self.input_dim // 2, hidden_units)
+            nn.Linear(self.input_dim // 2, latent_dim)
         )
 
         self.decoder = nn.Sequential(
-            nn.Linear(hidden_units, self.input_dim // 2),
+            nn.Linear(latent_dim, self.input_dim // 2),
             nn.BatchNorm1d(self.input_dim // 2),
             nn.ReLU(),
             
@@ -279,24 +280,29 @@ class ConvEncoder(nn.Module):
     def __init__(self, latent_dim=2, input_dim=128):
         super().__init__()
         
-        dim_after_conv = 8 * (input_dim // 128)
-        
-        self.conv_layers = nn.Sequential(
-            nn.Conv2d(1, 16, 3, stride=2, padding=1),  # 128x128 → 64x64
+        self.dim_after_conv = (4 * input_dim) // 128  # After 5 Conv Layers
+
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 256, kernel_size=3, stride=2, padding=1),  # 128x128 -> 64x64
+            nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(16, 32, 3, stride=2, padding=1), # 64x64 → 32x32
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 3, stride=2, padding=1), # 32x32 → 16x16
-            nn.ReLU(),
-            nn.Conv2d(64, 128, 3, stride=2, padding=1), # 16x16 → 8x8
-            nn.ReLU(),
+            nn.Dropout(0.4),
+
+            nn.MaxPool2d(kernel_size=2, stride=4),  # 64x64 -> 16x16
+
+            ConvResidualBlock(256, 32),  # 16x16 -> 16x16
+
+            nn.MaxPool2d(kernel_size=2, stride=4),  # 16x16 -> 4x4
+
             nn.Flatten(),
-            nn.Linear(128 * dim_after_conv**2, latent_dim)
+            
+            MLPResidualBlock(32 * self.dim_after_conv**2, input_dim // 2),
+
+            nn.Linear(input_dim // 2, latent_dim)
         )
 
     def forward(self, x):
-        return self.conv_layers(x)
-
+        return self.encoder(x)
 
 
 class FiLM(nn.Module):
@@ -306,74 +312,90 @@ class FiLM(nn.Module):
         self.beta = nn.Linear(m, n)
 
     def forward(self, x, latent):
-        print("X shape", x.shape)
-        print("latent shape", latent.shape)
         gamma = self.gamma(latent).unsqueeze(1)  # (B, 1, n)
         beta = self.beta(latent).unsqueeze(1)    # (B, 1, n)
         out = gamma * x + beta # B, num_pixels, 1
-        print("out shape", out.shape)
         return out #
 
 
-
-# Decoder: INR that takes (x, y) and latent vector, modulated by FiLM
 class INRDecoder(nn.Module):
-    def __init__(self, latent_dim=2, hidden_dim=256):
+    def __init__(self, latent_dim, output_dim=128, out_channels=1, hidden_dim=256, num_layers=4, fourier_features=8):
         super().__init__()
-        self.fc1 = nn.Linear(2, hidden_dim)  # Input: (x, y)
-        self.film1 = FiLM(latent_dim, hidden_dim)
+        self.latent_dim = latent_dim
+        self.output_dim = output_dim
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+
+        self.fourier_features = fourier_features
         
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.film2 = FiLM(latent_dim, hidden_dim)
+        # Learnable frequencies for Fourier features
+        self.freqs = nn.Parameter(torch.randn(fourier_features, 2) * 2 * np.pi)
 
-        self.fc3 = nn.Linear(hidden_dim, 1)  # Output: grayscale intensity
+        self.fc_in = nn.Linear(latent_dim + 2 * fourier_features, hidden_dim)
+        self.hidden_layers = nn.Sequential(
+            *[(nn.Linear(hidden_dim, hidden_dim)) for _ in range(num_layers)]
+        )
+        self.fc_out = nn.Linear(hidden_dim, out_channels)
 
-    def forward(self, x, z):
+    def forward(self, coords, z):
         """
-        x: (num_pixels, 2) - Normalized (x, y) coordinates
-        z: (B, latent_dim) - Image latent representation
+        coords: (B, N, 2) - Spatial coordinates
+        z: (B, latent_dim) - Latent representation
         """
-        x = F.relu(self.fc1(x)) # (num_pixels, hidden_dim)
-        x = self.film1(x, z)
-        
-        x = F.relu(self.fc2(x))
-        x = self.film2(x, z)
-        
-        out = torch.sigmoid(self.fc3(x)) # (B, num_pixels, 1)
-        print("INR out shape", out.shape)
-        return out
+        B, N, _ = coords.shape
 
-  
-# Autoencoder combining Encoder + INR Decoder
+        encoded_coords = torch.cat([
+            torch.sin(coords @ self.freqs.T),
+            torch.cos(coords @ self.freqs.T)
+        ], dim=-1)
+        torch.cat([torch.sin(coords), torch.cos(coords)], dim=-1) if self.fourier_features > 0 else coords
+
+        # Expand latent vector to match coordinate dimensions
+        z = z.unsqueeze(1).expand(-1, N, -1)  # (B, N, latent_dim)
+        inputs = torch.cat([encoded_coords, z], dim=-1)  # Concatenate (B, N, latent_dim + 2 * fourier_features)
+        
+        x = self.fc_in(inputs) # (B, H*W, hidden_dim)
+        x = self.hidden_layers(x) # (B, H*W, hidden_dim)
+        x = self.fc_out(x) # (B, H*W, output_dim)
+        
+        # Reshape to (B, C, H, W)
+        C = out.shape[-1]  # Number of output channels
+        out = out.view(B, self.output_dim, self.output_dim, C).permute(0, 3, 1, 2)  # (B, C, H, W)
+        return x
+
+
 class ConvInrAutoencoder(nn.Module):
-    def __init__(self, img_size=128, latent_dim=16):
+    def __init__(self, img_size=128, latent_dim=16, device='cuda'):
         super().__init__()
         self.input_dim = img_size
         self.encoder = ConvEncoder(latent_dim, input_dim=img_size)
-        self.decoder = INRDecoder(latent_dim)
+        self.decoder = INRDecoder(latent_dim, output_dim=img_size, out_channels=1, fourier_features=8)
         
-        x = torch.linspace(-1, 1, img_size)
-        y = torch.linspace(-1, 1, img_size)
+        x = torch.linspace(-1, 1, img_size).to(device)
+        y = torch.linspace(-1, 1, img_size).to(device)
         grid_x, grid_y = torch.meshgrid(x, y, indexing="ij")
-        self.coords = torch.stack((grid_x, grid_y), dim=-1).reshape(-1, 2) # (img_size^2, 2)
-
+        self.coords = torch.stack((grid_x, grid_y), dim=-1).reshape(-1, 2)  # (H*W, 2)
+    
     def forward(self, x):
         """
-        x: (batch, 1, H, W) - Input grayscale image
-        coords: (batch, num_pixels, 2) - Normalized (x, y) coordinates
+        x: (B, 1, H, W) - Input grayscale image
         """
         B = x.size(0)
-        z = self.encoder(x) # B x latent_dim
-        out = self.decoder(self.coords, z)  # B x num_pixels x 1
-        out = out.view(B, 1, self.input_dim, self.input_dim) # B x 1 x H x W
+        z = self.encoder(x)  # (B, latent_dim)
+
+        # Expand coordinates to match batch size
+        coords = self.coords.unsqueeze(0).expand(B, -1, -1) # (B, H*W, 2)
+
+        # Decode intensities per pixel (B, H*W, C)
+        out = self.decoder(coords, z) # (B, H*W, 1)
+
+        # Reshape back to original image dimensions
         return out, z
-  
-  
 
-  
 
-  
-  
+
+
+
 
 
 

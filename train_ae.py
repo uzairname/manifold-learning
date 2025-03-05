@@ -19,8 +19,8 @@ import wandb
 
 
 def train_ae(
-    rank,
     model_class: nn.Module,
+    rank=None,
     run = None,
     img_size=IMG_SIZE, 
     data_size=2**20, 
@@ -30,24 +30,23 @@ def train_ae(
     learning_rate=1e-4,
     weight_decay=0.001,
     checkpoint_every=None,
-    folder="models"
+    save_dir="models"
 ):
     torch.manual_seed(42)
-  
-    # rank = dist.get_rank()
+      
     world_size = dist.get_world_size()
     device = torch.device(f"cuda:{rank}")
 
     # Load dataset with DistributedSampler
     dataset = ClockDataset(len=data_size, img_size=img_size, supervised=True, augment=False, config=data_config)
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
-    dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=True, drop_last=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=True, drop_last=True, num_workers=4) # increase num_workers if GPU is underutilized
 
     # Initialize model and wrap with DistributedDataParallel
-    model = model_class(img_size=img_size, latent_dim=latent_dim).to(device)
+    model = model_class(img_size=img_size, latent_dim=latent_dim, device=device).to(device)
     ddp_model = nn.parallel.DistributedDataParallel(model, device_ids=[rank])
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.MSELoss()
     optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     # AMP initialization
@@ -56,8 +55,8 @@ def train_ae(
     # Training loop
 
     log_data_size = int(np.log2(np.max((data_size, 1))))
-    path = os.path.join(MODELS_DIR, folder, f'ae-{latent_dim}-i{img_size}-d{log_data_size}.pt')
-    os.makedirs(os.path.join(MODELS_DIR, folder), exist_ok=True)
+    path = os.path.join(MODELS_DIR, save_dir, f'ae-{latent_dim}-i{img_size}-d{log_data_size}.pt')
+    os.makedirs(os.path.join(MODELS_DIR, save_dir), exist_ok=True)
 
     print("training")
     running_loss = 0
@@ -78,13 +77,13 @@ def train_ae(
         scaler.step(optimizer)
         scaler.update()
 
-        # Average loss across GPUs
         loss_tensor = torch.tensor(loss.item(), device=device)
+        # Average loss across GPUs
         dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
         loss_tensor /= world_size 
 
         running_loss += loss_tensor.item()
-        if rank == 0 and ((i + 1) % 16 == 0):
+        if (rank == 0) and ((i + 1) % 16 == 0):
             avg_loss = running_loss / 16
             t.set_description_str(f"Training AE... Loss={avg_loss:.4f}")
             t.set_postfix(batches=f"{i+1}/{len(dataloader)}", gpus=f"{world_size}")
@@ -92,7 +91,6 @@ def train_ae(
                 run.log({"loss": avg_loss})
             running_loss = 0
 
-        # save checkpoint
 
     if rank == 0:
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -116,17 +114,14 @@ def train_ae(
         run.finish()
     
 
-def train_ae_process(rank, world_size):
+def train_ae_process(rank, world_size, distributed=True):
       
     process_group_setup(rank, world_size)
     
-    lr = 1e-4
-    img_size = 256
-    data_size = 2**14
     model_class = ConvInrAutoencoder
-    name='DeepAutoencoder'
-    n_params = sum(p.numel() for p in model_class(img_size=img_size).parameters())
-    
+    lr = 1e-4
+    img_size = 64
+    data_size = 2**20
     data_config = ClockConfig(
         minute_hand_len=1,
         minute_hand_start=0.5,
@@ -135,6 +130,8 @@ def train_ae_process(rank, world_size):
         hour_hand_start=0,
         hour_hand_thickness=0.1
     )
+    name=model_class.__name__
+    n_params = sum(p.numel() for p in model_class(img_size=img_size).parameters())
 
     if rank == 0:
         run = wandb.init(
@@ -154,14 +151,15 @@ def train_ae_process(rank, world_size):
 
     try:
       train_ae(
-          rank,
           model_class=model_class,
+          rank=rank,
           run=run,
+          learning_rate=lr,
           img_size=img_size,
           data_size=data_size,
           latent_dim=2,
           data_config=data_config,
-          folder=name
+          save_dir=name
       )
     except Exception as e:
       logging.error(f"Error in rank {rank}:")
@@ -172,10 +170,10 @@ def train_ae_process(rank, world_size):
 
 
 if __name__ == "__main__":
-    
     world_size = torch.cuda.device_count()
     print("available gpus:", world_size)
-
+    torch.cuda.empty_cache()
+    
     mp.spawn(
         train_ae_process,
         args=(world_size,),
