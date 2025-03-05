@@ -27,7 +27,7 @@
 #SBATCH --mail-type=ALL
 
 # Mail address
-#SBATCH --mail-user=moham147@msu.edu
+#SBATCH --mail-user=weiahe1@gmail.com
 
 # Standard output and error to file
 # %x: job name, %j: job ID
@@ -39,7 +39,7 @@ echo "Runnning script"
 cd /mnt/home/moham147/experiments/manifold-learning
 source .venv/bin/activate
 
-torchrun --nproc_per_node=4 train_ae.py
+python train_ae.py
 
 # Print resource information
 scontrol show job $SLURM_JOB_ID

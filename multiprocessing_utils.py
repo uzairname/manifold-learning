@@ -32,3 +32,7 @@ def process_group_setup(rank, world_size):
     setup_logging(rank)
     logging.info(f"Process group initialized for rank {rank}")
 
+def process_group_cleanup():
+    """ Clean up the process group."""
+    dist.destroy_process_group()
+    logging.info("Process group destroyed")
