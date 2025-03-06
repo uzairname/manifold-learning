@@ -1,6 +1,6 @@
 #!/bin/bash --login
 # Job name:
-#SBATCH --job-name=train_ae
+#SBATCH --job-name=train_decoder
 
 # Number of processes.
 # Unless programmed using MPI,
@@ -20,7 +20,7 @@
 # Wall time
 # Format: "minutes", "hours:minutes:seconds", 
 # "days-hours", or "days-hours:minutes"
-#SBATCH --time=01:00:00
+#SBATCH --time=03:00:00
 
 # Mail type
 # e.g., which events trigger email notifications
@@ -39,7 +39,7 @@ echo "Runnning script"
 cd /mnt/home/moham147/experiments/manifold-learning
 source .venv/bin/activate
 
-python train_ae.py
+python train_decoder.py
 
 # Print resource information
 scontrol show job $SLURM_JOB_ID
