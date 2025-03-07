@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from models.decoders import ResNetDecoder, INRDecoder
-from models.encoders import ConvResEncoder
+from models.encoders import ConvEncoderBlock, MLPEncoderReLU
+import torch.nn.functional as F
 
 
 class ResnetAutoencoder(nn.Module):
@@ -9,7 +10,7 @@ class ResnetAutoencoder(nn.Module):
     def __init__(self, latent_dim=2, img_size=128, **kwargs):
         super(ResnetAutoencoder, self).__init__()
 
-        self.encoder = ConvResEncoder(latent_dim=latent_dim, img_size=img_size)
+        self.encoder = ConvEncoderBlock(out_dim=latent_dim, img_size=img_size)
         self.decoder = ResNetDecoder(latent_dim=latent_dim, img_size=img_size)
 
     def forward(self, latent):
@@ -22,7 +23,7 @@ class ConvInrAutoencoder(nn.Module):
     def __init__(self, img_size=128, latent_dim=16, device='cuda'):
         super().__init__()
         self.input_dim = img_size
-        self.encoder = ConvResEncoder(latent_dim, img_size=img_size)
+        self.encoder = ConvEncoderBlock(latent_dim, img_size=img_size)
         self.decoder = INRDecoder(latent_dim, output_dim=img_size, out_channels=1, fourier_features=8)
 
         x = torch.linspace(-1, 1, img_size).to(device)
@@ -44,3 +45,19 @@ class ConvInrAutoencoder(nn.Module):
         reconstructed = self.decoder(coords, latent) # (B, H*W, 1)
 
         return reconstructed
+
+
+
+class MLPResnetAutoencoder(nn.Module):
+
+    def __init__(self, latent_dim=2, img_size=128, **kwargs):
+        super(MLPResnetAutoencoder, self).__init__()
+
+        self.encoder = MLPEncoderReLU(latent_dim=latent_dim, img_size=img_size)
+        self.decoder = ResNetDecoder(latent_dim=latent_dim, img_size=img_size)
+
+    def forward(self, latent):
+        latent = self.encoder(latent)
+        reconstructed = self.decoder(latent)
+        return reconstructed
+

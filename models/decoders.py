@@ -45,7 +45,7 @@ class ConvResidualDecoderBlock(nn.Module):
 
 
 class ResNetDecoder(nn.Module):
-    def __init__(self, latent_dim=2, img_size=128):
+    def __init__(self, latent_dim=2, img_size=128, **kwargs):
         super().__init__()
 
         self.dim_after_conv = (2 * img_size) // 128
@@ -68,9 +68,8 @@ class ResNetDecoder(nn.Module):
             ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2),  # 8x8 -> 32x32
             ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 4),  # 32x32 -> 128x128
             nn.Conv2d(resnet_start_channels // 4, 1, kernel_size=3, stride=1, padding=1), # 128x128 -> 128x128
-            nn.Sigmoid()  # Output in range [0,1]
+            nn.ReLU()
         )
-
 
     def forward(self, x):
         x = self.decoder_fc(x)
@@ -78,16 +77,10 @@ class ResNetDecoder(nn.Module):
         return x
 
 
-class ClockDecoder(nn.Module):
 
-    def __init__(self, latent_dim=2, img_size=128, **kwargs):
-        super(ClockDecoder, self).__init__()
 
-        self.decoder = ResNetDecoder(latent_dim=latent_dim, img_size=img_size)
 
-    def forward(self, x):
-        reconstructed = self.decoder(x)
-        return reconstructed
+
 
 
 class FiLM(nn.Module):
@@ -148,3 +141,6 @@ class INRDecoder(nn.Module):
         C = x.shape[-1]  # Number of output channels
         x = x.view(B, self.output_dim, self.output_dim, C).permute(0, 3, 1, 2)  # (B, C, H, W)
         return x
+
+
+

@@ -84,7 +84,6 @@ class ClockGenerator:
         return clock_tensor.unsqueeze(0)  # Add channel dimension (1, H, W)
 
 
-  
 
 class ClockDataset(Dataset):
     def __init__(
@@ -92,8 +91,6 @@ class ClockDataset(Dataset):
       device='cpu',
       len=2**12, 
       img_size=128, 
-      supervised=True, 
-      use_coords=False, 
       augment=True, 
       noise_std=0.05, 
       translate_px=1, 
@@ -109,7 +106,6 @@ class ClockDataset(Dataset):
         """
         self.len = len
         self.img_size = img_size
-        self.supervised = supervised
         self.augment = augment
         self.noise_std = noise_std
         self.translate_px = translate_px
@@ -130,6 +126,10 @@ class ClockDataset(Dataset):
         minute = total_minutes % 60 # in [0, 60)
         # total_minutes, hour, and minute are float16 tensors
 
+        # Convert time to labels in [0, 1)
+        hour_label = hour / 12
+        minute_label = minute / 60
+
         clock_tensor = self.clock_generator.generate_clock_tensor(hour, minute).to(self.device)
 
         if self.augment:
@@ -144,18 +144,12 @@ class ClockDataset(Dataset):
             ty = random.randint(-max_t, max_t)
 
             # Apply translation
-            clock_tensor = TF.affine(clock_tensor, angle=0, translate=(tx, ty), scale=1.0, shear=0, fill=1.0)
+            noisy_clock_tensor = TF.affine(clock_tensor, angle=0, translate=(tx, ty), scale=1.0, shear=0, fill=1.0)
 
             # Add Gaussian noise
-            clock_tensor = clock_tensor + torch.randn_like(clock_tensor) * self.noise_std
-            clock_tensor = torch.clamp(clock_tensor, 0, 1)
-            
-        
+            noisy_clock_tensor = noisy_clock_tensor + torch.randn_like(noisy_clock_tensor) * self.noise_std
+            noisy_clock_tensor = torch.clamp(noisy_clock_tensor, 0, 1)
+        else:
+            noisy_clock_tensor = clock_tensor
 
-        if self.supervised:
-            # Convert time to labels in [0, 1)
-            hour_label = hour / 12
-            minute_label = minute / 60
-            return clock_tensor, torch.stack([hour_label, minute_label]), time_of_day
-      
-        return clock_tensor
+        return noisy_clock_tensor, clock_tensor, torch.stack([hour_label, minute_label]), time_of_day
