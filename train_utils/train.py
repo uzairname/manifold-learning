@@ -48,7 +48,7 @@ class TrainRunConfig:
   # hyperparameters
   batch_size: int = 64
   learning_rate: float = 1e-4
-  weight_decay: float = 0.001
+  weight_decay: float = 1e-4
   loss_fn: nn.Module = nn.MSELoss()
   
   # checkpointing
@@ -59,6 +59,7 @@ class TrainRunConfig:
 
 def train_clock_model(c: TrainRunConfig):
     torch.cuda.empty_cache()
+
     c.world_size = torch.cuda.device_count()
     
     if c.name is None:
@@ -119,7 +120,6 @@ def train_process(rank, c: TrainRunConfig):
 
 def _train(c: TrainRunConfig):
     torch.manual_seed(42)
-    
             
     if (c.latent_dim > 2): raise ValueError("Latent dim must be 1 or 2")
       

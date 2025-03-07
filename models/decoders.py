@@ -47,7 +47,7 @@ class ConvResidualDecoderBlock(nn.Module):
 
 
 class ConvOnlyResidualDecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, **kwargs):
+    def __init__(self, in_channels, out_channels, dilation_rate=1):
         super().__init__()
 
         # First upsampling block
@@ -58,7 +58,7 @@ class ConvOnlyResidualDecoderBlock(nn.Module):
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2),
 
-            spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)),
+            spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation_rate, dilation=dilation_rate)),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2)
         )
@@ -67,11 +67,11 @@ class ConvOnlyResidualDecoderBlock(nn.Module):
         self.upsample2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode="bilinear", align_corners=True),
 
-            spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)),
+            spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation_rate, dilation=dilation_rate)),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2),
 
-            spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)),
+            spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation_rate, dilation=dilation_rate)),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2)
         )
@@ -98,6 +98,8 @@ class ResNetDecoder(nn.Module):
                 
         self.dim_before_conv = (2 * img_size) // 128
         resnet_start_channels = 256
+        
+        dilation_rate = kwargs.get("dilation_rate", 1)
 
         if kwargs.get("use_fc", True):
           # Decoder (Mirroring the Encoder)
@@ -128,9 +130,9 @@ class ResNetDecoder(nn.Module):
         else:
           self.decoder_conv = nn.Sequential(
               # Upsampling steps (each block doubles the resolution)
-              ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels),  # 2x2 -> 8x8
-              ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2),  # 8x8 -> 32x32
-              ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 4),  # 32x32 -> 128x128
+              ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels, dilation_rate=dilation_rate),  # 2x2 -> 8x8
+              ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2, dilation_rate=dilation_rate),  # 8x8 -> 32x32
+              ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 4, dilation_rate=dilation_rate),  # 32x32 -> 128x128
               nn.Conv2d(resnet_start_channels // 4, 1, kernel_size=3, stride=1, padding=1), # 128x128 -> 128x128
               nn.ReLU()
           )
@@ -139,6 +141,9 @@ class ResNetDecoder(nn.Module):
         x = self.fc(x)
         x = self.decoder_conv(x)
         return x
+
+
+
 
 
 
