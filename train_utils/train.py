@@ -27,6 +27,7 @@ class TrainRunConfig:
   type: typing.Literal["autoencoder", "encoder", "decoder"]
   latent_dim: int = 2
   img_size: int = IMG_SIZE
+  model_kwargs: dict = None
   
   # multiprocessing
   rank: int = None
@@ -48,6 +49,7 @@ class TrainRunConfig:
   batch_size: int = 64
   learning_rate: float = 1e-4
   weight_decay: float = 0.001
+  loss_fn: nn.Module = nn.MSELoss()
   
   # checkpointing
   n_checkpoints: int = None
@@ -74,11 +76,13 @@ def train_clock_model(c: TrainRunConfig):
             "weight_decay": c.weight_decay,
             "img-size": c.img_size,
             "model_class": c.model_class.__name__,
+            "model_kwargs": c.model_kwargs,
             "log-data-size": np.log2(c.data_size),
             "n-params": sum(p.numel() for p in c.model_class(img_size=c.img_size).parameters()),
             "batch-size": c.batch_size,
             "type": c.type,
             "augment": c.augment,
+            "loss-fn": c.loss_fn,
         },
         notes=c.notes,
         tags=c.tags
@@ -108,13 +112,14 @@ def train_process(rank, c: TrainRunConfig):
     logging.error(f"Error in rank {rank}:")
     logging.error(e, exc_info=True)
   finally:
-    dist.barrier()
+    dist.barrier(device_ids=[rank])
     process_group_cleanup()
     print(f"Cleaned up {rank}")
   
 
 def _train(c: TrainRunConfig):
     torch.manual_seed(42)
+    
             
     if (c.latent_dim > 2): raise ValueError("Latent dim must be 1 or 2")
       
@@ -126,10 +131,10 @@ def _train(c: TrainRunConfig):
     dataloader = DataLoader(dataset, batch_size=c.batch_size, sampler=sampler, pin_memory=True, drop_last=True, num_workers=4) # increase num_workers if GPU is underutilized
 
     # Initialize model and wrap with DistributedDataParallel
-    model = c.model_class(img_size=c.img_size, latent_dim=c.latent_dim, device=device).to(device)
+    model = c.model_class(img_size=c.img_size, latent_dim=c.latent_dim, **(c.model_kwargs or {})).to(device)
     ddp_model = nn.parallel.DistributedDataParallel(model, device_ids=[c.rank])
 
-    criterion = nn.MSELoss()
+    criterion = c.loss_fn
     optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=c.learning_rate, weight_decay=c.weight_decay)
 
     # AMP initialization
@@ -206,7 +211,7 @@ def _train(c: TrainRunConfig):
         eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, "final.pt"), criterion, dataloader)
         logging.info(f'Model checkpoints saved to {checkpoint_dir}')
       
-    dist.barrier()
+
         
     
         
@@ -224,12 +229,12 @@ def eval_and_save_model(
   torch.save(model.module.state_dict(), temp)
   temp.seek(0)
   state_dict = torch.load(temp)
-  model_copy = c.model_class(latent_dim=c.latent_dim, img_size=c.img_size, device=device).to(device)
+  model_copy = c.model_class(img_size=c.img_size, latent_dim=c.latent_dim, **(c.model_kwargs or {})).to(device)
   model_copy.load_state_dict(state_dict)
 
   # Trace and save the model
   model_copy.eval()
-  dummy_input = torch.randn(1, c.latent_dim).to(device) if type == "decoder" else torch.randn(1, 1, c.img_size, c.img_size).to(device)
+  dummy_input = torch.randn(1, c.latent_dim).to(device) if c.type == "decoder" else torch.randn(1, 1, c.img_size, c.img_size).to(device)
   scripted_model = torch.jit.trace(model_copy, dummy_input)
   torch.jit.save(scripted_model, path)
   

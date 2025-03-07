@@ -118,7 +118,7 @@ class ClockDataset(Dataset):
     def __getitem__(self, idx):
         # Get time of day as a fraction of 1
         phi = torch.tensor((1 + np.sqrt(5)) / 2, dtype=torch.float32).to(self.device) # Golden ratio
-        time_of_day = (phi * idx) % 1
+        time_of_day = (phi * (idx+1)) % 1
 
         # Convert to hour and minute
         total_minutes = time_of_day * 12 * 60 # in [0, 12*60)
