@@ -1,21 +1,25 @@
 from datasets.clock import ClockConfig
-from models.encoders import MLPEncoderReLU, MLPEncoderAdjustedSigmoid, MLPEncoderSigmoid, TwoHeadConvEncoder, ConvSelfAttentionEncoder, WideConvResEncoder
+from models.encoders import ConvMLPEncoder
 from train_utils.train import TrainRunConfig
 from train_utils import train_clock_model, TrainRunConfig
-
+import wandb
 
 if __name__ == "__main__":
- for cls in [ MLPEncoderSigmoid ]:
-    for augment in [ True, False ]:
-      for weight_decay in [1e-2]:
-  
+
+  for cls in [ ConvMLPEncoder ]:
+    for dropout_position in [0]:
+      for n_epochs in [4]:
         config = TrainRunConfig(
             model_class=cls,
+            name="ConvMLPEncoder",
             type="encoder",
+            model_kwargs=dict(
+                dropout_position=dropout_position,
+            ),
             latent_dim=2,
-            batch_size=128,
+            batch_size=512,
             img_size=128,
-            data_size=2**23,
+            data_size=2**19,
             data_config=ClockConfig(
                 minute_hand_len=1,
                 minute_hand_start=0.5,
@@ -25,13 +29,9 @@ if __name__ == "__main__":
                 hour_hand_thickness=0.1
             ),
             learning_rate=1e-4,
-            weight_decay=weight_decay,
-            augment=augment,
-            n_checkpoints=4,
-            notes="Bn momentum 0.5, testing augment",
-            save_path_suffix=f"augment-{augment}"
+            weight_decay=1e-3,
+            augment=False,
+            n_checkpoints=16,
         )
       
         train_clock_model(config)
-
- 

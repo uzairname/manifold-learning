@@ -11,7 +11,7 @@
 # Type and number of GPUs
 # The type is optional.
 #SBATCH --gpus=h200:4
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=4
 
 # Total CPU memory
 # All available memory per GPU is allocated by default.
@@ -21,7 +21,7 @@
 # Wall time
 # Format: "minutes", "hours:minutes:seconds", 
 # "days-hours", or "days-hours:minutes"
-#SBATCH --time=04:00:00
+#SBATCH --time=01:00:00
 
 # Mail type
 # e.g., which events trigger email notifications
@@ -40,7 +40,7 @@ echo "Runnning script"
 cd /mnt/home/moham147/experiments/manifold-learning
 source .venv/bin/activate
 
-python train/encoder.py
+python train/encoder0.py
 
 # Print resource information
 scontrol show job $SLURM_JOB_ID

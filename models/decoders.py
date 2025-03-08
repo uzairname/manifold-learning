@@ -88,7 +88,9 @@ class ConvOnlyResidualDecoderBlock(nn.Module):
         x = self.upsample2(x)
         x += identity  # Add skip connection
         return x
-
+      
+      
+  
 
 
 
@@ -99,43 +101,20 @@ class ResNetDecoder(nn.Module):
         self.dim_before_conv = (2 * img_size) // 128
         resnet_start_channels = 256
         
-        dilation_rate = kwargs.get("dilation_rate", 1)
+        self.fc = nn.Sequential(
+            nn.Linear(latent_dim, resnet_start_channels * self.dim_before_conv**2),
+            nn.ReLU(),
+            nn.Unflatten(1, (resnet_start_channels, self.dim_before_conv, self.dim_before_conv)), # 2x2
+        )
 
-        if kwargs.get("use_fc", True):
-          # Decoder (Mirroring the Encoder)
-          self.fc = nn.Sequential(
-              nn.Linear(latent_dim, img_size),
-              nn.BatchNorm1d(img_size),
-              nn.ReLU(),
-              nn.Linear(img_size, resnet_start_channels * self.dim_before_conv * self.dim_before_conv),
-              nn.ReLU(),
-              nn.Unflatten(1, (resnet_start_channels, self.dim_before_conv, self.dim_before_conv)), # 2x2
-          )
-        else:
-          self.fc = nn.Sequential(
-              nn.Linear(latent_dim, resnet_start_channels * self.dim_before_conv**2),
-              nn.ReLU(),
-              nn.Unflatten(1, (resnet_start_channels, self.dim_before_conv, self.dim_before_conv)), # 2x2
-          )
-
-        if kwargs.get("conv_only_decoder", False):
-           self.decoder_conv = nn.Sequential(
-              # Upsampling steps (each block doubles the resolution)
-              ConvOnlyResidualDecoderBlock(resnet_start_channels, resnet_start_channels),  # 2x2 -> 8x8
-              ConvOnlyResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2),  # 8x8 -> 32x32
-              ConvOnlyResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 4),  # 32x32 -> 128x128
-              nn.Conv2d(resnet_start_channels // 4, 1, kernel_size=3, stride=1, padding=1), # 128x128 -> 128x128
-              nn.ReLU()
-          )
-        else:
-          self.decoder_conv = nn.Sequential(
-              # Upsampling steps (each block doubles the resolution)
-              ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels, dilation_rate=dilation_rate),  # 2x2 -> 8x8
-              ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2, dilation_rate=dilation_rate),  # 8x8 -> 32x32
-              ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 4, dilation_rate=dilation_rate),  # 32x32 -> 128x128
-              nn.Conv2d(resnet_start_channels // 4, 1, kernel_size=3, stride=1, padding=1), # 128x128 -> 128x128
-              nn.ReLU()
-          )
+        self.decoder_conv = nn.Sequential(
+            # Upsampling steps (each block doubles the resolution)
+            ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels),  # 2x2 -> 8x8
+            ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2),  # 8x8 -> 32x32
+            ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 4),  # 32x32 -> 128x128
+            nn.Conv2d(resnet_start_channels // 4, 1, kernel_size=3, stride=1, padding=1), # 128x128 -> 128x128
+            nn.ReLU()
+        )
 
     def forward(self, x):
         x = self.fc(x)
