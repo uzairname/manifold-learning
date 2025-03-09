@@ -3,37 +3,38 @@ import torch.nn as nn
 from torch.nn.utils import spectral_norm
 import torch
 import torch.nn.utils.parametrize as parametrize
+import torch.nn.functional as F
 
 
 class ConvResidualDecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, **kwargs):
+    def __init__(self, in_channels, out_channels, convt_strides=[2,2], dilation=1):
         super().__init__()
-
+        
         # First upsampling block
         self.upsample1 = nn.Sequential(
-            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1), # x2
+            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=convt_strides[0]+2, stride=convt_strides[0], padding=1), # x2
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2),
 
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation, dilation=dilation),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2)
         )
 
         # Second upsampling block
         self.upsample2 = nn.Sequential(
-            nn.ConvTranspose2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1), # x2
+            nn.ConvTranspose2d(out_channels, out_channels, kernel_size=convt_strides[1]+2, stride=convt_strides[1], padding=1), # x2
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2),
 
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation, dilation=dilation),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2)
         )
 
         # Skip connection (upsampling by 4 using interpolation)
         self.skip = nn.Sequential(
-            nn.Upsample(scale_factor=4, mode="bilinear", align_corners=True),
+            nn.Upsample(scale_factor=np.prod(convt_strides), mode="bilinear", align_corners=True),
             nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
             nn.BatchNorm2d(out_channels),
         )
@@ -92,7 +93,7 @@ class ConvOnlyResidualDecoderBlock(nn.Module):
         return x
       
 
-  
+
 class ResNetDecoder(nn.Module):
     def __init__(self, latent_dim=2, img_size=128, **kwargs):
         super().__init__()
@@ -121,6 +122,92 @@ class ResNetDecoder(nn.Module):
         return x
 
 
+
+
+class ResNetDecoder2(nn.Module):
+    def __init__(self, latent_dim=2, img_size=128, resnet_start_channels=256, dropout_rate=0.2):
+        super().__init__()
+
+        self.dim_before_conv = (2 * img_size) // 128
+        resnet_start_channels = 256
+        
+        self.fc = nn.Sequential(
+            nn.Linear(latent_dim, resnet_start_channels * self.dim_before_conv**2),
+            nn.ReLU(),
+            nn.Unflatten(1, (resnet_start_channels, self.dim_before_conv, self.dim_before_conv)), # 2x2
+        )
+
+        self.decoder_conv = nn.Sequential(
+            ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2, convt_strides=[1,2]), #
+            nn.Dropout(0.4),
+            ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 4, convt_strides=[1,2], dilation=1),  #
+            nn.Dropout(0.3),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,1], dilation=1),  # 
+            nn.Dropout(0.2),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,1], dilation=1),  # 
+            nn.Dropout(0.1),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,1], dilation=1),  # 
+            nn.Dropout(0.1),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,2], dilation=1),  # 
+            nn.Dropout(0.04),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,2], dilation=1),  # 
+            nn.Dropout(0.01),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 16, convt_strides=[1,2], dilation=1),  # 
+
+            ConvResidualDecoderBlock(resnet_start_channels // 16, resnet_start_channels // 16, convt_strides=[1,2], dilation=1),  # 128x128 -> 128x128
+            nn.Conv2d(resnet_start_channels // 16, 1, kernel_size=3, stride=1, padding=1), # 128x128 -> 128x128
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        x = self.fc(x)
+        x = self.decoder_conv(x)
+        return x
+
+
+
+
+
+
+class ResNetDecoder3(nn.Module):
+    def __init__(self, latent_dim=2, img_size=128, resnet_start_channels=256, dropout_rate=0.2):
+        super().__init__()
+
+        self.dim_before_conv = (2 * img_size) // 128
+        resnet_start_channels = 256
+        
+        self.fc = nn.Sequential(
+            nn.Linear(latent_dim, resnet_start_channels * self.dim_before_conv**2),
+            nn.ReLU(),
+            nn.Unflatten(1, (resnet_start_channels, self.dim_before_conv, self.dim_before_conv)), # 2x2
+        )
+
+        self.decoder_conv = nn.Sequential(
+            ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2, convt_strides=[1,1]), #
+            nn.Dropout(0.4),
+            ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 4, convt_strides=[1,1], dilation=1),  #
+            nn.Dropout(0.3),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,1], dilation=1),  # 
+            nn.Dropout(0.2),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,1], dilation=1),  # 
+            nn.Dropout(0.1),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,2], dilation=1),  # 
+            nn.Dropout(0.1),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,2], dilation=1),  # 
+            nn.Dropout(0.04),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 4, convt_strides=[1,2], dilation=1),  # 
+            nn.Dropout(0.01),
+            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 16, convt_strides=[1,2], dilation=1),  # 
+
+            ConvResidualDecoderBlock(resnet_start_channels // 16, resnet_start_channels // 16, convt_strides=[2,2], dilation=1),  # 128x128 -> 128x128
+            nn.Conv2d(resnet_start_channels // 16, 1, kernel_size=3, stride=1, padding=1), # 128x128 -> 128x128
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        x = self.fc(x)
+        x = self.decoder_conv(x)
+        return x
 
 
 

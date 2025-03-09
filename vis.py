@@ -54,7 +54,7 @@ def print_model_parameters(cls: nn.Module, img_size=128, latent_dim=2):
     print(f"{'Total Trainable Parameters':<40}{total_params:>15,}")
 
 
-def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], model, dataloader):
+def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], model, dataloader, latent_dim=2):
   """
   yields:
     - image, label1d, label2d, latent, reconstructed
@@ -75,7 +75,7 @@ def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], mode
         reconstructeds = model.forward(images)
 
       elif type_ == 'decoder':
-        reconstructeds = model.forward(label2d)
+        reconstructeds = model.forward(label1d.unsqueeze(1) if latent_dim == 1 else label2d)
       
       
       for i in range(images.size(0)):
@@ -147,7 +147,7 @@ def show_data(dataloader: DataLoader):
   plt.show()
   
 
-def visualize_reconstruction(type_, model, dataloader):
+def visualize_reconstruction(type_, model, dataloader, latent_dim=2):
   if type_ == 'encoder':
     print("Encoder")
     return
@@ -161,14 +161,16 @@ def visualize_reconstruction(type_, model, dataloader):
   elif type_ == 'autoencoder':
     fig.suptitle('Autoencoder Reconstructions')
 
-  for i, (img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader)):
+  for i, (img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader, latent_dim=latent_dim)):
     if i >= n:
       break
     
     loss = torch.nn.functional.mse_loss(img, reconstructed)
     
+    unnormalized_label2d = (label2d * torch.tensor([12, 60]).to(device).float())
+    
     axs[i,0].imshow(img.squeeze().cpu(), cmap='gray')
-    axs[i,0].set_title(f"Original: {label1d:.0f}h{label2d[1]:.0f}m")
+    axs[i,0].set_title(f"Original: {unnormalized_label2d[0]:.0f}h{unnormalized_label2d[1]:.0f}m")
     axs[i,0].axis('off')
     
     axs[i,1].imshow(reconstructed.squeeze().cpu(), cmap='gray')
@@ -245,8 +247,11 @@ def visualize_latent(type_, model, latent_dim, dataloader):
     latents.append(latent.unsqueeze(0).cpu())
     labels1d.append(label1d.unsqueeze(0).cpu())
 
+  
   latents = torch.cat(latents, dim=0)
   labels1d = torch.cat(labels1d, dim=0)
+  
+  print("plotting")
   
   
   if (latent_dim <= 2):
@@ -265,7 +270,7 @@ def visualize_latent(type_, model, latent_dim, dataloader):
 
     # Plot PCA-reduced latent space
     plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(latents_2d[:, 0], latents_2d[:, 1], c=label1d, cmap="viridis", alpha=0.7)
+    scatter = plt.scatter(latents_2d[:, 0], latents_2d[:, 1], c=labels1d, cmap="viridis", alpha=0.7)
     plt.colorbar(scatter, label="Time in minutes past midnight")
     plt.xlabel("PCA Component 1")
     plt.ylabel("PCA Component 2")

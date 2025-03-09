@@ -3,17 +3,17 @@
 #SBATCH --job-name=train
 #SBATCH --ntasks=1
 #SBATCH --gpus=h200:4
-#SBATCH --cpus-per-task=24
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=150G
 #SBATCH --time=04:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=weiahe1@gmail.com
 #SBATCH --output=logs/%x-%j.SLURMout
 
 echo "Runnning script"
-cd /mnt/home/moham147/experiments/manifold-learning
+cd /mnt/ffs24/home/moham147/experiments/manifold-learning
 source .venv/bin/activate
-python train/encoder.py
+python train/decoder.py
 
 # Print resource information
 scontrol show job $SLURM_JOB_ID

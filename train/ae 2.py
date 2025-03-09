@@ -13,7 +13,7 @@ if __name__ == "__main__":
           latent_dim=2,
           batch_size=128,
           img_size=128,
-          data_size=2**21,
+          data_size=2**24,
           data_config=ClockConfig(
               minute_hand_len=1,
               minute_hand_start=0.5,

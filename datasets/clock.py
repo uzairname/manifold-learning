@@ -92,8 +92,8 @@ class ClockDataset(Dataset):
       len=2**12, 
       img_size=128, 
       augment=True, 
-      noise_std=0.05, 
-      translate_px=1, 
+      noise_std=0.03,
+      translate_px=1,
       config: ClockConfig = ClockConfig()
     ):
         """

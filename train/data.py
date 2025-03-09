@@ -1,3 +1,5 @@
+from models.decoders import ResNetDecoder3
+from train_utils.train import get_dataloaders
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -10,7 +12,6 @@ from dataclasses import dataclass
 import functools
 
 import os
-import psutil
 import io
 import time
 import wandb
@@ -22,6 +23,9 @@ from config import MODELS_DIR
 from utils import mkdir_empty
 from train_utils.multiprocessing_utils import process_group_cleanup, process_group_setup
 from datasets.clock import IMG_SIZE, ClockConfig, ClockDataset
+
+
+import psutil
 
 @dataclass
 class TrainRunConfig:
@@ -140,27 +144,31 @@ def get_dataloaders(
 
   return train_dataloader, val_dataloader, train_sampler, val_sampler
 
+
 def _train(c: TrainRunConfig):
     torch.manual_seed(42)     
     device = torch.device(f"cuda:{c.rank}")
     
-    # Get dataloaders
-    train_dataloader, val_dataloader, train_sampler, _ = get_dataloaders(
-        data_config=c.data_config,
-        data_size=c.data_size,
-        val_size=c.val_size,
-        img_size=c.img_size,
-        augment=c.augment,
-        batch_size=c.batch_size,
-        world_size=c.world_size,
-        rank=c.rank
-    )
     
-    # Create validation. Shape (N, B, C, H, W)
-    if c.rank == 0:
-        val_data = [batch for batch in val_dataloader]
+    # Get dataloaders
+    # Dataset
+    train_dataset = ClockDataset(device='cpu', len=c.data_size, img_size=c.img_size, augment=c.augment, config=c.data_config)
+
+    val_size = 0
+    # Split into train and val
+    if val_size is None:
+        val_size = np.min((data_size//8, 2**12))
+    # train_dataset, val_dataset = torch.utils.data.random_split(dataset, [len(dataset) - val_size, val_size])
+
+    # Get sampler and dataloader for train data
+    if c.rank is not None:
+      train_sampler = DistributedSampler(train_dataset, num_replicas=c.world_size, rank=c.rank, shuffle=True)
     else:
-        val_data = None
+      train_sampler = torch.utils.data.RandomSampler(train_dataset)
+    train_dataloader = DataLoader(train_dataset, batch_size=c.batch_size, sampler=train_sampler, pin_memory=True, drop_last=True, num_workers=6, persistent_workers=True) 
+    
+    # train_dataloader = DataLoader(dataset, batch_size=c.batch_size, sampler=train_sampler, pin_memory=True, drop_last=True, num_workers=6, persistent_workers=True) 
+
 
     n_epochs = c.n_epochs
     # Total number of batches this gpu will see
@@ -172,7 +180,6 @@ def _train(c: TrainRunConfig):
     logging.info(f"total steps {total_steps}")
     logging.info(f"Data size {c.data_size}, batch size {c.batch_size}, epochs {n_epochs}")
     logging.info(f"Training on 2^{log_total_train_samples} total samples, ~{batches_per_gpu_epoch} batches per epoch per GPU")
-    logging.info(f"Validation on {len(val_dataloader.dataset)} samples")
 
     # Initialize model and wrap with DistributedDataParallel
     model = c.model_partial().to(device)
@@ -184,59 +191,20 @@ def _train(c: TrainRunConfig):
     # AMP initialization
     scaler = torch.amp.GradScaler()
 
-    # Save file name
-        
-    # Checkpoint directory
-    checkpoint_dir = os.path.join(MODELS_DIR, c.name, f"{c.latent_dim}-i{c.img_size}-d{log_total_train_samples}{c.save_path_suffix or ''}")
-    if c.rank == 0:
-      mkdir_empty(checkpoint_dir)
-    
-    logging.info(f"Saving model checkpoints to {checkpoint_dir}")
-    checkpoint_every = np.max((total_steps // c.n_checkpoints, 1)) if c.n_checkpoints is not None else None
-    mkdir_empty(checkpoint_dir)
-    
-    if c.log_wandb and c.rank == 0:
-      c.run = wandb.init(
-        name=c.name,
-        project="manifold-learning",
-        config={
-            "latent-dim": c.latent_dim,
-            "learning-rate": c.learning_rate,
-            "weight-decay": c.weight_decay,
-            "img-size": c.img_size,
-            "model-class": c.model_class.__name__,
-            "model-kwargs": c.model_args,
-            "n-epochs": c.n_epochs,
-            "train-samples-per-epoch": train_samples, # Unique train samples, per epoch.
-            "log-total-train-samples": log_total_train_samples, # Train samples times number of epochs
-            "n-params": sum(p.numel() for p in c.model_partial().parameters()),
-            "batch-size": c.batch_size,
-            "type": c.type,
-            "augment": c.augment,
-            "loss-fn": c.loss_fn,
-        },
-        notes=c.notes,
-        tags=c.tags
-      )
-    
-      wandb.define_metric("steps")
-      wandb.define_metric("val_loss", step_metric="steps")
-      wandb.define_metric("train_loss", step_metric="steps")
-      
-    
     # Training loop
     val_loss_eval = None
-    checkpoint_num = 0
     running_loss = 0
     
+    print("training")
     with tqdm(total=total_steps, disable=(c.rank != 0)) as t:
-      start_time = time.time()
       for epoch in range(n_epochs):
         train_sampler.set_epoch(epoch)
+        logging.info("d")
         for i, batch in enumerate(train_dataloader):
             mem = psutil.virtual_memory()
+
             step = i + epoch * len(train_dataloader)
-          
+
             imgs, clean_imgs, labels2d, labels1d = batch
             labels = labels1d.unsqueeze(1) if c.latent_dim == 1 else labels2d
             if c.type == "encoder":
@@ -250,12 +218,6 @@ def _train(c: TrainRunConfig):
                 output = clean_imgs.to(device)
                 
             # Save model checkpoint before optimization step
-            if c.rank == 0 and checkpoint_every is not None and (step % checkpoint_every == 0):
-              val_loss_eval, val_loss_train = eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), criterion, val_data)
-              checkpoint_num += 1
-              if c.run is not None:
-                c.run.log({"val_loss": val_loss_eval, "steps": step})
-
             # Forward pass with AMP broadcast for mixed precision
             with torch.amp.autocast(device_type='cuda'):
               pred = ddp_model(input)
@@ -271,7 +233,7 @@ def _train(c: TrainRunConfig):
             if (c.rank == 0) and (step % 16 == 0):
                 avg_loss = running_loss / 16
                 t.set_description_str(f"Loss={avg_loss:.5f}" + (f" Val Loss={val_loss_eval:.5f}" if val_loss_eval is not None else ""))
-                t.set_postfix(epoch=f"{epoch}/{n_epochs}",batch=f"{i}/{batches_per_gpu_epoch}", gpus=f"{c.world_size}", mem=f"{mem.percent:.2f}%")
+                t.set_postfix(epoch=f"{epoch}/{n_epochs}",batch=f"{i}/{batches_per_gpu_epoch}", gpus=f"{c.world_size}", mem_util=f"{mem.percent}%")
                 if c.run is not None:
                     c.run.log({"train_loss": avg_loss, "steps": step})
                 running_loss = 0
@@ -283,17 +245,8 @@ def _train(c: TrainRunConfig):
 
             if c.rank == 0:
               t.update(1) 
-      time_taken = time.time() - start_time
 
-    if c.run is not None:
-      c.run.summary["time_taken"] = time_taken
     # Evaluate and save final loss              
-    if c.rank == 0:
-        eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, "final.pt"), criterion, val_data)
-        if c.run is not None:
-            c.run.log({"val_loss": val_loss_eval, "steps": step})
-        logging.info(f'Model checkpoints saved to {checkpoint_dir}')
-      
 
 def eval_model(
   type_: typing.Literal['encoder', 'autoencoder', 'decoder'],
@@ -381,3 +334,40 @@ def eval_and_save_model(
 """
 torchrun --nproc_per_node=4 train_ae.py
 """
+
+
+if __name__ == "__main__":
+  
+  for cls in [ ResNetDecoder3 ]:
+    for total_samples in [2**27]:
+        data_size=total_samples # for infinite data, 1 epoch
+
+        for batch_size in [32]:
+          config = TrainRunConfig(
+            type="decoder",
+            name=cls.__name__,
+            model_class=cls,
+            model_args=dict(
+              resnet_start_channels=512,
+            ),
+            loss_fn=nn.MSELoss(),
+            img_size=128,
+            data_size=data_size,
+            n_epochs=total_samples//data_size,
+            batch_size=batch_size,
+            latent_dim=2,
+            learning_rate=3e-4*batch_size/128,
+            weight_decay=3e-4,
+            data_config=ClockConfig(
+                minute_hand_len=1,
+                minute_hand_start=0.5,
+                miute_hand_thickness=0.1,
+                hour_hand_len=0.5,
+                hour_hand_start=0,
+                hour_hand_thickness=0.1
+            ),
+            n_checkpoints=16,
+            augment=True,
+            save_path_suffix=f"",
+          )
+          train_clock_model(config)
