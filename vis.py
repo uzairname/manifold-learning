@@ -1,54 +1,29 @@
 import torch
 from torch.utils.data import DataLoader
-from datasets.clock import ClockConfig, ClockDataset
 import matplotlib.pyplot as plt
 import os
 from config import MODELS_DIR
 import typing
 from torch import nn
+from functools import partial
+from sklearn.decomposition import PCA
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-data_size = 4096
 
-def load_data(
-  img_size=128,
-  batch_size=64,
-  data_size=data_size,
-  data_config=None
-): 
-  """
-  Load the dataset for inference.
-  """
-  # Load dataset
-  dataset = ClockDataset(device=device, len=data_size, img_size=img_size, augment=False, config=data_config)
-  dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, pin_memory=device.type != 'cuda')
-  
-  return dataloader
-
-def load_model_and_data(
+def load_model(
     img_size=128,
-    batch_size=64,
-    data_size=data_size,
     latent_dim=2,
     postfix='',
     name='model',
-    data_config=None,
     checkpoint=None
 ):
     """
-    Load the model and dataset for inference.
+    Load the trained model and dataset for inference.
     """
-    # Load dataset
-    dataloader = load_data(
-        img_size=img_size,
-        batch_size=batch_size,
-        data_size=data_size,
-        data_config=data_config
-    )
+
     
     # Load model
-
-    model_file = f"{latent_dim}-i{img_size}{postfix}"
+    model_file = f"{latent_dim}-i{img_size}-{postfix}"
     
     if checkpoint is None:
       model_path = os.path.join(MODELS_DIR, name, model_file, f"final.pt")
@@ -58,8 +33,7 @@ def load_model_and_data(
     model = torch.jit.load(model_path).to(device)
     model.eval()
     
-    return model, dataloader
-
+    return model
 
 
 def print_model_parameters(cls: nn.Module, img_size=128, latent_dim=2):
@@ -81,9 +55,14 @@ def print_model_parameters(cls: nn.Module, img_size=128, latent_dim=2):
 
 
 def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], model, dataloader):
+  """
+  yields:
+    - image, label1d, label2d, latent, reconstructed
+  """
   with torch.no_grad():
     for _, clean_imgs, label2d, label1d in dataloader:
       images = clean_imgs.to(device)
+      label1d = label1d.to(device)
       label2d = label2d.to(device)
       
       latents = None
@@ -98,10 +77,49 @@ def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], mode
       elif type_ == 'decoder':
         reconstructeds = model.forward(label2d)
       
+      
       for i in range(images.size(0)):
         latent = latents[i] if latents is not None else None
         reconstructed = reconstructeds[i] if reconstructeds is not None else None
         yield images[i], label1d[i], label2d[i], latent, reconstructed
+
+
+def eval_model(
+  type_: typing.Literal['encoder', 'autoencoder', 'decoder'],
+  model: nn.Module,
+  val_data: typing.List,
+  device: str,
+  criterion: nn.Module=nn.MSELoss(),
+  latent_dim: int=2,
+):
+  
+  val_loss = 0
+  model.eval()
+  for i, batch in enumerate(val_data):
+      imgs, clean_imgs, labels2d, labels1d = batch
+      labels = labels1d.unsqueeze(1) if latent_dim == 1 else labels2d
+
+      if type_ == "encoder":
+          input = imgs.to(device)
+          output = labels.to(device)
+          
+      elif type_ == "decoder":
+          input = labels.to(device)
+          output = clean_imgs.to(device)
+      elif type_ == "autoencoder":
+          input = imgs.to(device)
+          output = clean_imgs.to(device)
+
+      with torch.no_grad():
+          pred = model(input)
+          loss = criterion(pred, output)
+          val_loss += loss.item()
+          
+          
+  val_loss /= len(val_data)
+
+  return val_loss
+
 
 
 def show_data(dataloader: DataLoader):
@@ -161,13 +179,19 @@ def visualize_reconstruction(type_, model, dataloader):
 
 
 
-def visualize_predictions(type_, model, dataloader):
+def visualize_predictions(
+  type_,
+  model, 
+  dataloader, 
+  criterion=nn.MSELoss(),
+  latent_dim=2
+):
   if type_ != 'encoder':
     print("Not encoder")
     return
   
   n=4
-  s=3
+  s=2
   fig, axs = plt.subplots(n, n, figsize=(n*s, 1.2*n*s))
   fig.suptitle('Encoder Predictions')
     
@@ -175,32 +199,64 @@ def visualize_predictions(type_, model, dataloader):
     if i >= n**2:
       break
     
-    unnormalized_pred = (latent * torch.tensor([12, 60]).to(device).float())
-    unnormalized_labels = (label2d * torch.tensor([12, 60]).to(device).float())
+    if latent_dim == 1:
+      # Latents are in minutes past midnight. Multiply by 12*60 to unnormalize
+      unnormalized_latent = (latent * torch.tensor(12*60).to(device).float()).cpu()
+      unnormalized_label1d = (label1d * torch.tensor(12*60).to(device).float()).cpu()
+
+      pred_minute = unnormalized_latent.item()
+      true_minute = unnormalized_label1d.item()
+
+      desc= f"Pred: {pred_minute:.0f}m\nTrue: {true_minute:.0f}m"
+      labels = label1d.unsqueeze(0)
+      
+    else:
+      # Latents are in hours and minutes. Multiply by [12, 60] to unnormalize
+      unnormalized_latent = (latent * torch.tensor([12, 60]).to(device).float())
+      unnormalized_label2d = (label2d * torch.tensor([12, 60]).to(device).float())
+      
+      pred_hour = unnormalized_latent[0]
+      pred_minute = unnormalized_latent[1]
+      true_hour = unnormalized_label2d[0]
+      true_minute = unnormalized_label2d[1]
+
+      desc= f"Pred: {pred_hour:.0f}h{pred_minute:.0f}m\nTrue: {true_hour:.0f}h{true_minute:.0f}m"
+      labels = label2d
+
+    assert labels.shape == latent.shape
+    loss = criterion(labels, latent)
     
-    pred_hour = unnormalized_pred[0]
-    pred_minute = unnormalized_pred[1]
-    
-    true_hour = unnormalized_labels[0]
-    true_minute = unnormalized_labels[1]
-    
-    loss = torch.nn.functional.mse_loss(img, latent)
-    
-    axs[i//n, i%n].imshow(img.squeeze().cpu(), cmap='gray')
-    axs[i//n, i%n].set_title(f"Pred: {pred_hour:.0f}h{pred_minute:.0f}m\nTrue: {true_hour:.0f}h{true_minute:.0f}m\nLoss: {loss:.4f}")
+    axs[i//n, i%n].imshow(img.squeeze().cpu(), cmap='gray') 
+    axs[i//n, i%n].set_title(f"{desc}\nLoss: {loss:.6f}")
     axs[i//n, i%n].axis('off')
     
     
 
-def visualize_latent():
-  if (LATENT_DIM <= 2):
+def visualize_latent(type_, model, latent_dim, dataloader):
+  
+  if type_ == 'decoder':
+    print("Decoder")
+    return
+  
+  # Get a batch of model outputs
+  latents = []
+  labels1d = []
+  for _, label1d, _, latent, _ in get_outputs(type_, model, dataloader):
+    latents.append(latent.unsqueeze(0).cpu())
+    labels1d.append(label1d.unsqueeze(0).cpu())
+
+  latents = torch.cat(latents, dim=0)
+  labels1d = torch.cat(labels1d, dim=0)
+  
+  
+  if (latent_dim <= 2):
     # Plot latent space
     plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(latents[:, 0], label1d if LATENT_DIM==1 else latents[:,1], c=label1d, cmap="viridis", alpha=0.7)
+    scatter = plt.scatter(labels1d if latent_dim==1 else latents[:,1], latents[:,0], c=labels1d, cmap="viridis", alpha=0.7)
     plt.colorbar(scatter, label="Time in minutes past midnight")
-    plt.xlabel("Latent Dimension 1")
-    plt.ylabel("Time in minutes past midnight" if LATENT_DIM==1 else "Latent Dimension 2")
-    plt.title("Learned Manifold of Autoencoder (Clock Dataset)")
+    plt.xlabel("Time in minutes past midnight" if latent_dim==1 else "Latent Dimension 2")
+    plt.ylabel("Latent Dimension 1")
+    plt.title("Output of encoder")
     plt.show()
   else:
     # PCA for dimensionality reduction
@@ -214,5 +270,5 @@ def visualize_latent():
     plt.xlabel("PCA Component 1")
     plt.ylabel("PCA Component 2")
     
-    plt.title("Learned Manifold of Autoencoder (Clock Dataset)")
+    plt.title("PCA of output of encoder")
     plt.show()

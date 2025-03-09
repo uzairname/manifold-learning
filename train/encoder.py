@@ -1,25 +1,26 @@
 from datasets.clock import ClockConfig
-from models.encoders import ConvMLPEncoder
+from models.encoders import ConvMLPEncoder, MLPEncoder
 from train_utils.train import TrainRunConfig
 from train_utils import train_clock_model, TrainRunConfig
-import wandb
+import numpy as np
 
 if __name__ == "__main__":
 
   for cls in [ ConvMLPEncoder ]:
-    for dropout_position in [0]:
-      for n_epochs in [4]:
+    for total_data_size in [2**19]:
+      for data_size in [2**19]:
+      
         config = TrainRunConfig(
             model_class=cls,
-            name="ConvMLPEncoder",
             type="encoder",
             model_kwargs=dict(
-                dropout_position=dropout_position,
             ),
-            latent_dim=2,
-            batch_size=512,
+            latent_dim=1,
+            batch_size=128,
             img_size=128,
-            data_size=2**19,
+            data_size=data_size,
+            val_size=np.min((data_size//8, 2**12)),
+            n_epochs=total_data_size//data_size,
             data_config=ClockConfig(
                 minute_hand_len=1,
                 minute_hand_start=0.5,

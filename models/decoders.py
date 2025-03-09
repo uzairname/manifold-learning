@@ -10,29 +10,33 @@ class ConvResidualDecoderBlock(nn.Module):
 
         # First upsampling block
         self.upsample1 = nn.Sequential(
-            spectral_norm(nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)), # x2
+            # spectral_norm(nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1)), # x2
+            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4, stride=2, padding=1), # x2
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2),
 
-            spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)),
+            # spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2)
         )
 
         # Second upsampling block
         self.upsample2 = nn.Sequential(
-            spectral_norm(nn.ConvTranspose2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1)), # x2
+            # spectral_norm(nn.ConvTranspose2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1)), # x2
+            nn.ConvTranspose2d(out_channels, out_channels, kernel_size=4, stride=2, padding=1), # x2
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2),
 
-            spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)),
+            # spectral_norm(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2)
         )
 
         # Skip connection (upsampling by 4 using interpolation)
         self.skip = nn.Sequential(
-            nn.Upsample(scale_factor=4, mode="bilinear", align_corners=True), # x4
+            nn.Upsample(scale_factor=4, mode="bilinear", align_corners=False), # x4
             spectral_norm(nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1))
         )
 
@@ -91,9 +95,6 @@ class ConvOnlyResidualDecoderBlock(nn.Module):
       
       
   
-
-
-
 class ResNetDecoder(nn.Module):
     def __init__(self, latent_dim=2, img_size=128, **kwargs):
         super().__init__()
