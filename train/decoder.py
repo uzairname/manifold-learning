@@ -7,10 +7,13 @@ import torch.nn as nn
 if __name__ == "__main__":
   for cls in [ ResNetDecoder ]:
     for total_samples in [2**18]:
-      for data_size in np.logspace(9, 18, 2, base=2).astype(int):
-        for batch_size in [32, 128]:
+        data_size=total_samples # for infinite data, 1 epoch
+
+        for batch_size in [128]:
           config = TrainRunConfig(
             type="decoder",
+            name="ResNetDecoder",
+            notes="spectral norm",
             model_class=cls,
             model_kwargs=dict(
               use_fc=False,
@@ -33,7 +36,7 @@ if __name__ == "__main__":
                 hour_hand_thickness=0.1
             ),
             n_checkpoints=16,
-            save_path_suffix=f"data_size{data_size}",
+            save_path_suffix=f"",
           )
           train_clock_model(config)
 

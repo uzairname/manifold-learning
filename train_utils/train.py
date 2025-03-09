@@ -276,7 +276,7 @@ def _train(c: TrainRunConfig):
                 
             # Save model checkpoint
             if c.rank == 0 and checkpoint_every is not None and (step % checkpoint_every == 0):
-              val_loss_eval, val_loss_train = eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), criterion, val_data, checkpoint_num=checkpoint_num)
+              val_loss_eval, val_loss_train = eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), criterion, val_data)
               checkpoint_num += 1
               
               if c.run is not None:
@@ -357,7 +357,6 @@ def eval_and_save_model(
   path: str,
   criterion: nn.Module,
   val_data: typing.List,
-  checkpoint_num: int = None,
 ):
   # Unwrap from DDP and save the model using TorchScript trace
   temp = io.BytesIO()
@@ -370,7 +369,7 @@ def eval_and_save_model(
   # Trace and save the model
   model_copy.eval()
   dummy_input = torch.randn(1, c.latent_dim).to(device) if c.type == "decoder" else torch.randn(1, 1, c.img_size, c.img_size).to(device)
-  scripted_model = torch.jit.trace(model_copy, dummy_input)
+  scripted_model = torch.jit.script(model_copy)
   torch.jit.save(scripted_model, path)
   
   # Evaluate the model test loss

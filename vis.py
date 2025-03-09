@@ -192,7 +192,7 @@ def visualize_predictions(
   
   n=4
   s=2
-  fig, axs = plt.subplots(n, n, figsize=(n*s, 1.2*n*s))
+  fig, axs = plt.subplots(n, n, figsize=(n*s, 1.3*n*s))
   fig.suptitle('Encoder Predictions')
     
   for i, (img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader)):
