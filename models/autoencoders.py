@@ -7,10 +7,10 @@ from models.encoders import ConvMLPEncoder
 
 class MLPResnetAutoencoder(nn.Module):
 
-    def __init__(self, latent_dim=2, img_size=128, **kwargs):
+    def __init__(self, latent_dim=2, img_size=128, encoder_args: dict=None):
         super(MLPResnetAutoencoder, self).__init__()
 
-        self.encoder = ConvMLPEncoder(latent_dim=latent_dim, img_size=img_size)
+        self.encoder = ConvMLPEncoder(latent_dim=latent_dim, img_size=img_size, **encoder_args)
         self.decoder = ResNetDecoder(latent_dim=latent_dim, img_size=img_size)
 
     def forward(self, latent):

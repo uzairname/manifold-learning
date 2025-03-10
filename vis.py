@@ -10,7 +10,7 @@ from sklearn.decomposition import PCA
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def load_model(
+def load_model_script(
     img_size=128,
     latent_dim=2,
     postfix='',
@@ -36,9 +36,42 @@ def load_model(
     return model
 
 
-def print_model_parameters(cls: nn.Module, img_size=128, latent_dim=2):
+def load_model_state_dict(
+  model_class: nn.Module,
+  img_size=128,
+  latent_dim=2,
+  model_args:dict={},
+  postfix='',
+  name='model',
+  checkpoint=None
+):
+  """
+  Loads a clock model by state dict and architecture
+  """
   
-    model = cls(img_size=img_size, latent_dim=latent_dim).to(device)
+  model_file = f"{latent_dim}-i{img_size}-{postfix}"
+  
+  if checkpoint is None:
+    model_path = os.path.join(MODELS_DIR, name, model_file, f"final.pt")
+  else:
+    model_path = os.path.join(MODELS_DIR, name, model_file, f"{checkpoint}.pt")
+  
+  model = model_class(img_size=img_size, latent_dim=latent_dim, **model_args).to(device)
+  state_dict = torch.load(model_path, map_location=device)
+  
+  if 'model' in state_dict:
+    state_dict = state_dict['model']
+  
+  model.load_state_dict(state_dict)
+  model.eval()
+  
+  return model
+
+
+
+def print_model_parameters(cls: nn.Module, details=False):
+  
+    model = cls().to(device)
 
     print(f"{'Layer':<40}{'Param Count':>15}")
     print("-" * 60)
@@ -48,7 +81,8 @@ def print_model_parameters(cls: nn.Module, img_size=128, latent_dim=2):
         if param.requires_grad:
             param_count = param.numel()
             total_params += param_count
-            print(f"{name:<40}{param_count:>15}")
+            if details:
+              print(f"{name:<40}{param_count:>15}")
     
     print("-" * 60)
     print(f"{'Total Trainable Parameters':<40}{total_params:>15,}")
@@ -82,6 +116,35 @@ def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], mode
         latent = latents[i] if latents is not None else None
         reconstructed = reconstructeds[i] if reconstructeds is not None else None
         yield images[i], label1d[i], label2d[i], latent, reconstructed
+
+
+
+def map_inputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], dataloader, forward_fn, latent_dim=2):
+  """
+  Given a forward function that takes an input according to the type and returns an output of batches,
+  this function maps the inputs to the outputs.
+  """
+  
+  with torch.no_grad():
+    for _, clean_imgs, label2d, label1d in dataloader:
+      images = clean_imgs.to(device)
+      label1d = label1d.to(device)
+      label2d = label2d.to(device)
+      
+      outs = None
+      if type_ == 'encoder':
+        outs = forward_fn(images)
+      
+      elif type_ == 'autoencoder':
+        outs = forward_fn(images)
+
+      elif type_ == 'decoder':
+        outs = forward_fn(label1d.unsqueeze(1) if latent_dim == 1 else label2d)
+        
+      for i in range(images.size(0)):
+        yield images[i], label1d[i], label2d[i], outs[i]
+  
+
 
 
 def eval_model(

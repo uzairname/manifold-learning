@@ -5,8 +5,9 @@ from torch.utils.data import DataLoader, DistributedSampler
 import torch.multiprocessing as mp
 import numpy as np
 
+import json
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import functools
 
 import os
@@ -60,6 +61,7 @@ class TrainRunConfig:
   # checkpointing
   n_checkpoints: int = None
   save_path_suffix: str = None
+  save_method: typing.Literal["state_dict", "trace", "script"] = "state_dict"
 
 def train_clock_model(c: TrainRunConfig):
     torch.cuda.empty_cache()
@@ -156,6 +158,8 @@ def _train(c: TrainRunConfig):
         rank=c.rank
     )
     
+    torch.autograd.set_detect_anomaly(True)
+    
     # Create validation. Shape (N, B, C, H, W)
     if c.rank == 0:
         val_data = [batch for batch in val_dataloader]
@@ -185,15 +189,23 @@ def _train(c: TrainRunConfig):
     scaler = torch.amp.GradScaler()
 
     # Save file name
-        
+
     # Checkpoint directory
     checkpoint_dir = os.path.join(MODELS_DIR, c.name, f"{c.latent_dim}-i{c.img_size}-d{log_total_train_samples}{c.save_path_suffix or ''}")
     if c.rank == 0:
       mkdir_empty(checkpoint_dir)
+      if c.save_method == "state_dict":
+        # save json of model args, img_size, latent_dim to the checkpoint dir
+        with open(os.path.join(checkpoint_dir, "model_args.json"), "w") as f:
+          json.dump({
+            "data_config": asdict(c.data_config),
+            "model_args": c.model_args,
+            "img_size": c.img_size,
+            "latent_dim": c.latent_dim,
+        }, f)
     
     logging.info(f"Saving model checkpoints to {checkpoint_dir}")
     checkpoint_every = np.max((total_steps // c.n_checkpoints, 1)) if c.n_checkpoints is not None else None
-    mkdir_empty(checkpoint_dir)
     
     if c.log_wandb and c.rank == 0:
       c.run = wandb.init(
@@ -201,6 +213,7 @@ def _train(c: TrainRunConfig):
         project="manifold-learning",
         config={
             "latent-dim": c.latent_dim,
+            "data-config": c.data_config,
             "learning-rate": c.learning_rate,
             "weight-decay": c.weight_decay,
             "img-size": c.img_size,
@@ -220,6 +233,7 @@ def _train(c: TrainRunConfig):
       )
     
       wandb.define_metric("steps")
+      wandb.define_metric("time")
       wandb.define_metric("val_loss", step_metric="steps")
       wandb.define_metric("train_loss", step_metric="steps")
       
@@ -251,10 +265,10 @@ def _train(c: TrainRunConfig):
                 
             # Save model checkpoint before optimization step
             if c.rank == 0 and checkpoint_every is not None and (step % checkpoint_every == 0):
-              val_loss_eval, val_loss_train = eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), criterion, val_data)
+              val_loss_eval = eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), criterion, val_data)
               checkpoint_num += 1
               if c.run is not None:
-                c.run.log({"val_loss": val_loss_eval, "steps": step})
+                c.run.log({"val_loss": val_loss_eval, "steps": step, "time": time.time() - start_time})
 
             # Forward pass with AMP broadcast for mixed precision
             with torch.amp.autocast(device_type='cuda'):
@@ -273,7 +287,7 @@ def _train(c: TrainRunConfig):
                 t.set_description_str(f"Loss={avg_loss:.5f}" + (f" Val Loss={val_loss_eval:.5f}" if val_loss_eval is not None else ""))
                 t.set_postfix(epoch=f"{epoch}/{n_epochs}",batch=f"{i}/{batches_per_gpu_epoch}", gpus=f"{c.world_size}", mem=f"{mem.percent:.2f}%")
                 if c.run is not None:
-                    c.run.log({"train_loss": avg_loss, "steps": step})
+                    c.run.log({"train_loss": avg_loss, "steps": step, "time": time.time() - start_time})
                 running_loss = 0
                 
             # Backward pass with scaler
@@ -284,6 +298,7 @@ def _train(c: TrainRunConfig):
             if c.rank == 0:
               t.update(1) 
       time_taken = time.time() - start_time
+    
 
     if c.run is not None:
       c.run.summary["time_taken"] = time_taken
@@ -306,17 +321,17 @@ def eval_model(
   val_loss_eval = 0
   model.eval()
   for i, batch in enumerate(val_data):
-      imgs, clean_imgs, labels2d, labels1d = batch
+      _, clean_imgs, labels2d, labels1d = batch
       labels = labels1d.unsqueeze(1) if latent_dim == 1 else labels2d
 
       if type_ == "encoder":
-          input = imgs.to(device)
+          input = clean_imgs.to(device)
           output = labels.to(device)
       elif type_ == "decoder":
           input = labels.to(device)
           output = clean_imgs.to(device)
       elif type_ == "autoencoder":
-          input = imgs.to(device)
+          input = clean_imgs.to(device)
           output = clean_imgs.to(device)
 
       with torch.no_grad():
@@ -324,32 +339,8 @@ def eval_model(
           loss = criterion(pred, output)
           val_loss_eval += loss.item()
   val_loss_eval /= len(val_data)
-
-  val_loss_train = 0
-  model.train()
-  for i, batch in enumerate(val_data):
-    imgs, clean_imgs, labels2d, labels1d = batch
-    labels = labels1d.unsqueeze(1) if latent_dim == 1 else labels2d
-
-    if type_ == "encoder":
-        input = imgs.to(device)
-        output = labels.to(device)
-    elif type_ == "decoder":
-        input = labels.to(device)
-        output = clean_imgs.to(device)
-    elif type_ == "autoencoder":
-        input = imgs.to(device)
-        output = clean_imgs.to(device)
-
-    with torch.no_grad():
-        pred = model(input)
-        loss = criterion(pred, output)
-        val_loss_train += loss.item()
-
-  val_loss_train /= len(val_data)
   
-  return val_loss_eval, val_loss_train
-        
+  return val_loss_eval
         
 def eval_and_save_model(
   c: TrainRunConfig,
@@ -369,14 +360,23 @@ def eval_and_save_model(
 
   # Trace and save the model
   model_copy.eval()
-  # dummy_input = torch.randn(1, c.latent_dim).to(device) if c.type == "decoder" else torch.randn(1, 1, c.img_size, c.img_size).to(device)
-  scripted_model = torch.jit.script(model_copy)
-  torch.jit.save(scripted_model, path)
-  
+  if c.save_method == "trace":
+    dummy_input = torch.randn(1, c.latent_dim).to(device) if c.type == "decoder" else torch.randn(1, 1, c.img_size, c.img_size).to(device)
+    scripted_model = torch.jit.trace(model_copy, dummy_input)
+    torch.jit.save(scripted_model, path)
+  elif c.save_method == "script":
+    scripted_model = torch.jit.script(model_copy)
+    torch.jit.save(scripted_model, path)
+  elif c.save_method == "state_dict":
+    scripted_model = model_copy
+    torch.save(scripted_model.state_dict(), path)
+  else:
+    raise ValueError(f"Unknown save method {c.save_method}")
+
   # Evaluate the model test loss
-  val_loss_eval, val_loss_train = eval_model(c.type, model_copy, val_data, device, criterion=criterion, latent_dim=c.latent_dim)
+  val_loss_eval = eval_model(c.type, model_copy, val_data, device, criterion=criterion, latent_dim=c.latent_dim)
   
-  return val_loss_eval, val_loss_train
+  return val_loss_eval
 
 """
 torchrun --nproc_per_node=4 train_ae.py
