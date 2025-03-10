@@ -139,7 +139,6 @@ def get_dataloaders(
   
   assert len(train_dataloader) > 0, f"Train dataloader is empty (batch_size={batch_size}, dataset size={len(train_dataset)}, world_size={world_size})"
   assert val_size == 0 or len(val_dataloader) > 0, "Validation dataloader is empty"
-
   return train_dataloader, val_dataloader, train_sampler, val_sampler
 
 def _train(c: TrainRunConfig):

@@ -13,7 +13,6 @@ class ConvResidualEncoderBlock(nn.Module):
             nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(0.2),
-            nn.Dropout(0.3) if kwargs.get('dropout_position', -1)==0 else nn.Identity(),
             
             nn.AvgPool2d(kernel_size=4, stride=2, padding=1), # 128x128 -> 64x64
 
@@ -39,6 +38,8 @@ class ConvResidualEncoderBlock(nn.Module):
         # Skip connection (upsampling by 4 using interpolation)
         self.skip = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.2),
             nn.AvgPool2d(kernel_size=4, stride=4, padding=1), # 128x128 -> 32x32
         )
 
@@ -75,15 +76,20 @@ class MLPEncoder(nn.Module):
 
 
 class ConvMLPEncoder(nn.Module):
-  def __init__(self, latent_dim=2, img_size=128, **kwargs):
+  def __init__(
+    self, 
+    latent_dim=2, 
+    img_size=128, 
+    fc_size=128,
+    sigmoid_scale=1
+  ):
     super(ConvMLPEncoder, self).__init__()
+    self.sigmoid_scale = sigmoid_scale
     
     self.conv = nn.Sequential(
-      ConvResidualEncoderBlock(1, 64, 2, dropout_position=kwargs.get('dropout_position', -1)), # 128x128 -> 32x32
-      nn.Dropout(0.3) if kwargs.get('dropout_position', -1)==1 else nn.Identity(),
-      ConvResidualEncoderBlock(64, 32, 2), # 32x32 -> 8x8
-      nn.AvgPool2d(kernel_size=4, stride=2, padding=1), # 8x8 -> 4x4
-      nn.Dropout(0.3) if kwargs.get('dropout_position', -1)==2 else nn.Identity(),
+      ConvResidualEncoderBlock(1, 16, 2), # 128x128 -> 32x32
+      ConvResidualEncoderBlock(16, 32, 2), # 32x32 -> 8x8
+      ConvResidualEncoderBlock(32, 64, 2), # 8x8 -> 2x2
       nn.Flatten(),
     )
     
@@ -92,17 +98,16 @@ class ConvMLPEncoder(nn.Module):
     self.dim_after_flatten = dummy_input.shape[-1]
     
     self.fc = nn.Sequential(
-      nn.Linear(self.dim_after_flatten, 128),
-      nn.LayerNorm(128),
+      nn.Linear(self.dim_after_flatten, fc_size),
+      nn.BatchNorm1d(fc_size),
       nn.ReLU(),
-      nn.Dropout(0.3) if kwargs.get('dropout_position', -1)==3 else nn.Identity(),
-      nn.Linear(128, latent_dim),
-      nn.Sigmoid(),
+      nn.Linear(fc_size, latent_dim),
     )
-    
+  
   def forward(self, x):
     x = self.conv(x)
     x = self.fc(x)
+    x = self.sigmoid_scale*(F.sigmoid(x)-0.5)+0.5
     return x
 
   

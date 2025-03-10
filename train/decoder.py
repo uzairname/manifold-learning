@@ -20,7 +20,6 @@ if __name__ == "__main__":
                 resnet_start_channels=resnet_start_channels,
                 fc_size=fc_size,
                 conv_start_channels=64,
-                activation='sigmoid',
               ),
               loss_fn=nn.MSELoss(),
               img_size=128,

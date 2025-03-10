@@ -15,8 +15,8 @@ IMG_SIZE = 128
 @dataclass
 class ClockConfig:
     minute_hand_len: int = 1
-    minute_hand_start: float = 0
-    miute_hand_thickness: float = 0.05
+    minute_hand_start: float = 0.5
+    miute_hand_thickness: float = 0.1
     hour_hand_len: int = 0.5
     hour_hand_start: float = 0
     hour_hand_thickness: float = 0.1

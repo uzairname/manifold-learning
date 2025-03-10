@@ -278,15 +278,9 @@ class ResNetDecoder3(nn.Module):
       img_size=128, 
       resnet_start_channels=256,
       conv_start_channels=16,
-      activation: ActivationType='sigmoid',
       fc_size=128,
     ):
         super().__init__()
-        
-        if activation == ActivationType.leakyrelu:
-            activation = partial(nn.LeakyReLU, negative_slope=0.2)
-        elif activation == ActivationType.sigmoid:
-            activation = nn.Sigmoid
 
         self.dim_before_conv = (4 * img_size) // 128
 
@@ -307,7 +301,7 @@ class ResNetDecoder3(nn.Module):
             nn.Dropout(0.04),
             ConvResidualDecoderBlock(resnet_start_channels // 16, resnet_start_channels // 64, convt_strides=[2,2], dilation=4),  # -> 128x128
             nn.Conv2d(resnet_start_channels // 64, 1, kernel_size=3, stride=1, padding=1), # -> 128x128
-            activation()
+            nn.Sigmoid()
         )
 
     def forward(self, x):

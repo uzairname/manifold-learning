@@ -11,20 +11,22 @@ if __name__ == "__main__":
           type="autoencoder",
           model_args=dict(
             encoder_args=dict(
-                resnet_start_channels=384,
-                fc_size=1024,
-                conv_start_channels=64,
-                activation='sigmoid',
-              ),
+              fc_size=512,
+            ),
+            decoder_args=dict(
+              resnet_start_channels=384,
+              fc_size=1024,
+              conv_start_channels=64,
+            ),
           ),
           latent_dim=2,
           batch_size=128,
           img_size=128,
-          data_size=2**26,
+          data_size=2**22,
           data_config=ClockConfig(),
           augment=True,
           learning_rate=1e-4,
-          weight_decay=1e-3,
+          # weight_decay=1e-3,
           n_checkpoints=16,
       )
     

@@ -1,0 +1,1 @@
+Training an autoencoder on images of clocks with little inductive bias. Seeing if it learns interpretable representations of the data.
