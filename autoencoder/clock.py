@@ -40,6 +40,7 @@ class TrainRunConfig:
   # hyperparameters
   n_epochs: int = 1
   batch_size: int = 64
+  optimizer: typing.Callable = None
   learning_rate: float = 1e-4
   weight_decay: float = 0.0
   loss_fn: nn.Module = nn.MSELoss()

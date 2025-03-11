@@ -18,7 +18,7 @@ class TrainRunConfig:
   # model
   model_class: nn.Module
   model_partial: typing.Callable = None
-  model_args: dict = None
+  model_params: dict = None
 
   # multiprocessing
   rank: int = None

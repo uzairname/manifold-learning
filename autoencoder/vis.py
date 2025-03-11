@@ -2,6 +2,8 @@ import torch
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import os
+
+from tqdm import tqdm
 from config import MODELS_DIR
 import typing
 from torch import nn
@@ -41,7 +43,7 @@ def load_model_state_dict(
   model_class: nn.Module,
   img_size=128,
   latent_dim=2,
-  model_args:dict=None,
+  model_params:dict=None,
   postfix='',
   name='model',
   checkpoint=None
@@ -57,12 +59,12 @@ def load_model_state_dict(
   else:
     model_path = os.path.join(MODELS_DIR, name, model_dir, f"{checkpoint}.pt")
   
-  if not model_args:
+  if not model_params:
     # load model args from json
-    with open(os.path.join(MODELS_DIR, name, model_dir, 'model_args.json'), 'r') as f:
-      model_args = json.load(f).get('model_args', {})
+    with open(os.path.join(MODELS_DIR, name, model_dir, 'model_params.json'), 'r') as f:
+      model_params = json.load(f).get('model_params', {})
   
-  model = model_class(img_size=img_size, latent_dim=latent_dim, **model_args).to(device)
+  model = model_class(img_size=img_size, latent_dim=latent_dim, **model_params).to(device)
   state_dict = torch.load(model_path, map_location=device)
   
   if 'model' in state_dict:
@@ -78,6 +80,7 @@ def load_model_state_dict(
 def print_model_parameters(cls: nn.Module, details=False):
   
     model = cls().to(device)
+    model.eval()
 
     print(f"{'Layer':<40}{'Param Count':>15}")
     print("-" * 60)
@@ -192,27 +195,27 @@ def eval_model(
 
 
 
-def show_data(dataloader: DataLoader):
+def show_data(dataloader: DataLoader, device=device):
   
   # visualize 16 images
-  fig, axs = plt.subplots(4, 4, figsize=(10, 10))
-  fig.tight_layout()
-  imgs, clean_imgs, labels2d, label1d = next(iter(dataloader))
-  for i in range(16):
-      if i >= 16:
+  fig, axs = plt.subplots(8, 8, figsize=(10, 12))
+  # fig.tight_layout()
+  # imgs, clean_imgs, labels2d, label1d = next(iter(dataloader.dataset))
+  for i, (imgs, clean_imgs, labels2d, label1d) in enumerate(iter(dataloader.dataset)):
+      if i >= 64:
         break
-      
-      img = imgs[i]
-      label2d = labels2d[i]
+      # print(labels2d)
+      img = imgs.to(device)
+      label2d = labels2d.to(device)
 
       label2d_unnormalized = (label2d * torch.tensor([12, 60]).to(device).float())
 
       hour = label2d_unnormalized[0]
       minute = label2d_unnormalized[1]
 
-      axs[i // 4, i % 4].imshow(img.squeeze().cpu(), cmap='gray')
-      axs[i // 4, i % 4].set_title(f"{hour:.0f}h{minute:.0f}m")
-      axs[i // 4, i % 4].axis('off')
+      axs[i // 8, i % 8].imshow(img.squeeze().cpu(), cmap='gray')
+      axs[i // 8, i % 8].set_title(f"{hour:.0f}h{minute:.0f}m")
+      axs[i // 8, i % 8].axis('off')
 
   plt.show()
   
@@ -222,9 +225,9 @@ def visualize_reconstruction(type_, model, dataloader, latent_dim=2):
     print("Encoder")
     return
 
-  n=6
-  s=3
-  fig, axs = plt.subplots(n, 3, figsize=(3*s, n*s))
+  n=10
+  s=2
+  fig, axs = plt.subplots(n, 6, figsize=(6*s, n*s))
   
   if type_ == 'decoder':
     fig.suptitle('Decoder Reconstructions')
@@ -232,24 +235,40 @@ def visualize_reconstruction(type_, model, dataloader, latent_dim=2):
     fig.suptitle('Autoencoder Reconstructions')
 
   for i, (noisy_img, img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader, latent_dim=latent_dim)):
-    if i >= n:
+    if i >= 2*n:
       break
     
     loss = torch.nn.functional.smooth_l1_loss(img, reconstructed)
     
     unnormalized_label2d = (label2d * torch.tensor([12, 60]).to(device).float())
     
-    axs[i,0].imshow(noisy_img.squeeze().cpu(), cmap='gray')
-    axs[i,0].set_title("Noisy Image")
-    axs[i,0].axis('off')
+    if i % 2 == 0:
+      axs[i//2,0].imshow(noisy_img.squeeze().cpu(), cmap='gray')
+      axs[i//2,0].set_title("Noisy Image")
+      axs[i//2,0].axis('off')
+      
+      axs[i//2,1].imshow(img.squeeze().cpu(), cmap='gray')
+      axs[i//2,1].set_title(f"Original: {unnormalized_label2d[0]:.0f}h{unnormalized_label2d[1]:.0f}m")
+      axs[i//2,1].axis('off')
+      
+      axs[i//2,2].imshow(reconstructed.squeeze().cpu(), cmap='gray')
+      axs[i//2,2].set_title(f"Loss: {loss:.4f}")
+      axs[i//2,2].axis('off')
+
+    else:
+      axs[i//2,3].imshow(noisy_img.squeeze().cpu(), cmap='gray')
+      axs[i//2,3].set_title("Noisy Image")
+      axs[i//2,3].axis('off')
+      
+      axs[i//2,4].imshow(img.squeeze().cpu(), cmap='gray')
+      axs[i//2,4].set_title(f"Original: {unnormalized_label2d[0]:.0f}h{unnormalized_label2d[1]:.0f}m")
+      axs[i//2,4].axis('off')
+      
+      axs[i//2,5].imshow(reconstructed.squeeze().cpu(), cmap='gray')
+      axs[i//2,5].set_title(f"Loss: {loss:.4f}")
+      axs[i//2,5].axis('off')
     
-    axs[i,1].imshow(img.squeeze().cpu(), cmap='gray')
-    axs[i,1].set_title(f"Original: {unnormalized_label2d[0]:.0f}h{unnormalized_label2d[1]:.0f}m")
-    axs[i,1].axis('off')
     
-    axs[i,2].imshow(reconstructed.squeeze().cpu(), cmap='gray')
-    axs[i,2].set_title(f"Loss: {loss:.4f}")
-    axs[i,2].axis('off')
 
   plt.show()
 
@@ -271,7 +290,7 @@ def visualize_predictions(
   fig, axs = plt.subplots(n, n, figsize=(n*s, 1.3*n*s))
   fig.suptitle('Encoder Predictions')
     
-  for i, (img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader)):
+  for i, (_, img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader)):
     if i >= n**2:
       break
     
@@ -317,7 +336,7 @@ def visualize_latent(type_, model, latent_dim, dataloader):
   # Get a batch of model outputs
   latents = []
   labels1d = []
-  for _, label1d, _, latent, _ in get_outputs(type_, model, dataloader):
+  for _, _, label1d, _, latent, _ in get_outputs(type_, model, dataloader):
     latents.append(latent.unsqueeze(0).cpu())
     labels1d.append(label1d.unsqueeze(0).cpu())
 

@@ -33,7 +33,7 @@ class ClockGenerator:
         self.device = device
         
         if config is None:
-            config = ClockConfig()
+            self.config = ClockConfig()
         else: 
             self.config = config
 
@@ -80,7 +80,7 @@ class ClockGenerator:
         if _quantization > 0:
             hour_angle = torch.round(hour_angle * _quantization / (2*torch.pi)) * (2*torch.pi) / _quantization
             minute_angle = torch.round(minute_angle * _quantization / (2*torch.pi)) * (2*torch.pi) / _quantization
-
+            
         # Function to generate a one-directional hand mask
         def draw_hand(angle, start, length, width):
             # Compute distance of each pixel from the hand's centerline
@@ -144,9 +144,9 @@ class ClockDataset(Dataset):
 
     def __getitem__(self, idx):
       # Get time of day as a fraction of 1
-      phi = torch.tensor((1 + np.sqrt(5)) / 2, dtype=torch.float32).to(self.config.device) # Golden ratio
-      time_of_day = ( phi * (idx) + self.config.initial_time ) % 1
-
+      phi = torch.tensor((1 + np.sqrt(5)) / 2.0, dtype=torch.float32).to(self.config.device) # Golden ratio
+      time_of_day = ( phi * torch.tensor(idx, dtype=torch.float32).to(self.config.device) ) % 1.0
+      
       # Convert to hour and minute
       total_minutes = time_of_day * 12 * 60 # in [0, 12*60)
       hour = torch.floor(total_minutes / 60) # in [0, 12)
@@ -171,15 +171,15 @@ class ClockDataset(Dataset):
           torch.manual_seed(idx)
 
           # Add Gaussian noise
-          noisy_clock_tensor = clock_tensor + torch.randn_like(clock_tensor) * self.noise_std
+          noisy_clock_tensor = clock_tensor + torch.randn_like(clock_tensor) * self.noise_std/2
           
-          # Apply Gaussian blur by sampling from a gaussian kernel and convolving
+          # Apply blur
           if self.blur > 0:
-              kernel_size = int(2 * np.ceil(2 * self.blur) + 1)
-              kernel = torch.exp(-torch.arange(-kernel_size//2, kernel_size//2, dtype=torch.float32)**2 / (2 * self.blur**2))
-              kernel /= kernel.sum()
-              noisy_clock_tensor = torch.nn.functional.conv2d(noisy_clock_tensor, kernel[None, None, :, None], padding=kernel_size//2)
-          
+              noisy_clock_tensor = TF.gaussian_blur(noisy_clock_tensor, kernel_size=int(self.blur*2+1))
+              
+          # Add noise after blur
+          noisy_clock_tensor = noisy_clock_tensor + torch.randn_like(clock_tensor) * self.noise_std/2
+
           noisy_clock_tensor = torch.clamp(noisy_clock_tensor, 0, 1)
       else:
           noisy_clock_tensor = clock_tensor

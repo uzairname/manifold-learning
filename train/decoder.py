@@ -23,13 +23,11 @@ if __name__ == "__main__":
                 conv_start_channels=64,
               ),
               img_size=128,
-              data_config=ClockConfig(
-                hour_hand_width=0.2,
-                minute_hand_width=0.2
-              ),
+              data_config=ClockConfig(),
               dataset_config=ClockDatasetConfig(
                 augment=dict(
-                  noise_std=0.01
+                  noise_std=0.01,
+                  blur=1
                 ),
                 data_size=data_size,
               ),
@@ -40,7 +38,7 @@ if __name__ == "__main__":
               weight_decay=1e-4,
               loss_fn=nn.SmoothL1Loss(),
               n_checkpoints=16,
-              save_path_suffix=f"b",
+              save_path_suffix=f"",
             )
             train_clock_model(config)
 

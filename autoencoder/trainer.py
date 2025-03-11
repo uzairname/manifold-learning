@@ -87,44 +87,51 @@ def _train(c: TrainRunConfig):
         val_data = None
 
     n_epochs = c.n_epochs
+    
     # Total number of batches this gpu will see
     total_steps = len(train_dataloader) * n_epochs
+    
+    # Number of unique samples in the training set
     train_samples = len(train_dataloader.dataset)
+    
+    # Number of total samples seen by the model (train_samples * n_epochs) is 2^log_total_train_samples
     log_total_train_samples = np.round(np.log2(len(train_dataloader.dataset) * n_epochs)).astype(int)
+    
     batches_per_gpu_epoch = len(train_dataloader)
     
-    logging.info(f"total steps {total_steps}")
-    logging.info(f"Data size {c.dataset_config.data_size}, batch size {c.batch_size}, epochs {n_epochs}")
-    logging.info(f"Training on 2^{log_total_train_samples} total samples, ~{batches_per_gpu_epoch} batches per epoch per GPU")
-    logging.info(f"Validation on {len(val_dataloader.dataset)} samples")
-
+    # Checkpoint every n optimization steps/batches
+    checkpoint_every = np.max((total_steps // c.n_checkpoints, 1)) if c.n_checkpoints is not None else None
+    
     # Initialize model and wrap with DistributedDataParallel
     model = c.model_partial().to(device)
+    model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
     ddp_model = nn.parallel.DistributedDataParallel(model, device_ids=[c.rank])
 
-    criterion = c.loss_fn
-    optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=c.learning_rate, weight_decay=c.weight_decay)
+    if c.optimizer is not None:
+      optimizer = c.optimizer(model)
+    else:
+      optimizer = torch.optim.AdamW(model.parameters(), lr=c.learning_rate, weight_decay=c.weight_decay)
 
-    # AMP initialization
+    criterion = c.loss_fn
+
     scaler = torch.amp.GradScaler()
 
-    # Save file name
     # Checkpoint directory
     checkpoint_dir = os.path.join(MODELS_DIR, c.name, f"{c.latent_dim}-i{c.img_size}-d{log_total_train_samples}{c.save_path_suffix or ''}")
     if c.rank == 0:
       mkdir_empty(checkpoint_dir)
       if c.save_method == "state_dict":
         # save json of model args, img_size, latent_dim to the checkpoint dir
-        with open(os.path.join(checkpoint_dir, "model_args.json"), "w") as f:
+        with open(os.path.join(checkpoint_dir, "model_params.json"), "w") as f:
           json.dump({
-            "data_config": asdict(c.data_config),
-            "model_args": c.model_params,
+            "data_config": asdict(c.data_config) if c.data_config is not None else None,
+            "model_params": c.model_params,
             "img_size": c.img_size,
             "latent_dim": c.latent_dim,
         }, f)
-    
+          
+          
     logging.info(f"Saving model checkpoints to {checkpoint_dir}")
-    checkpoint_every = np.max((total_steps // c.n_checkpoints, 1)) if c.n_checkpoints is not None else None
     
     if c.log_wandb and c.rank == 0:
       c.run = wandb.init(
@@ -145,7 +152,6 @@ def _train(c: TrainRunConfig):
             "n-params": sum(p.numel() for p in c.model_partial().parameters()),
             "batch-size": c.batch_size,
             "type": c.type,
-            "augment": c.dataset_config.augment,
             "loss-fn": c.loss_fn,
             "dataset": DATASET_NAME,
         },
@@ -158,18 +164,23 @@ def _train(c: TrainRunConfig):
       wandb.define_metric("val_loss", step_metric="steps")
       wandb.define_metric("train_loss", step_metric="steps")
       
-
+    # wandb.watch(ddp_model, log="all", log_freq=16)
+      
+    logging.info(f"total steps {total_steps}")
+    logging.info(f"Data size {c.dataset_config.data_size}, batch size {c.batch_size}, epochs {n_epochs}")
+    logging.info(f"Training on 2^{log_total_train_samples} total samples, ~{batches_per_gpu_epoch} batches per epoch per GPU")
+    logging.info(f"Validation on {len(val_dataloader.dataset)} samples")
+    
+        
     # Training loop
     val_loss_eval = None
     checkpoint_num = 0
     running_loss = 0
-    
+    start_time = time.time()
     with tqdm(total=total_steps, disable=(c.rank != 0)) as t:
-      start_time = time.time()
       for epoch in range(n_epochs):
         train_sampler.set_epoch(epoch)
         for i, batch in enumerate(train_dataloader):
-            mem = psutil.virtual_memory()
             step = i + epoch * len(train_dataloader)
           
             imgs, clean_imgs, labels2d, labels1d = batch
@@ -207,6 +218,10 @@ def _train(c: TrainRunConfig):
             # Log gradient norms
             if (c.rank == 0) and (step % 16 == 0):
               log_gradient_norms(c.run, ddp_model, time=time.time() - start_time)
+              # log image
+              # if c.run is not None:
+              #   c.run.log({"image": wandb.Image(imgs[0].cpu())})
+                
 
             torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), 0.2)
             scaler.step(optimizer)
@@ -216,6 +231,7 @@ def _train(c: TrainRunConfig):
             # Log the loss
             running_loss += loss_tensor.item()
             if (c.rank == 0) and (step % 16 == 0):
+                mem = psutil.virtual_memory()
                 avg_loss = running_loss / 16
                 t.set_description_str(f"Loss={avg_loss:.5f}" + (f" Val Loss={val_loss_eval:.5f}" if val_loss_eval is not None else ""))
                 t.set_postfix(epoch=f"{epoch}/{n_epochs}",batch=f"{i}/{batches_per_gpu_epoch}", gpus=f"{c.world_size}", mem=f"{mem.percent:.2f}%")
@@ -225,9 +241,8 @@ def _train(c: TrainRunConfig):
 
             if c.rank == 0:
               t.update(1) 
-            
               
-      time_taken = time.time() - start_time
+    time_taken = time.time() - start_time
     
 
     if c.run is not None:

@@ -11,11 +11,10 @@ if __name__ == "__main__":
   train_mnist_model(
     c=TrainRunConfig(
       model_class=cls,
-      n_epochs=3,
+      n_epochs=6,
       batch_size=64,
       learning_rate=1e-4,
       weight_decay=1e-2,
-      max_gpus=1
     )
   )
   

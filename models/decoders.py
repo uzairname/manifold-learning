@@ -295,12 +295,12 @@ class ResNetDecoder3(nn.Module):
 
         self.decoder_conv = nn.Sequential(
             nn.Conv2d(conv_start_channels, resnet_start_channels, kernel_size=3, stride=1, padding=1), # -> 4x4
-            ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 4, convt_strides=[1,2]), # -> 8x8
+            ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2, convt_strides=[1,2]), # -> 8x8
             nn.Dropout(0.2),
-            ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 16, convt_strides=[2,2], dilation=2),  # -> 32x32
+            ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 8, convt_strides=[2,2], dilation=2),  # -> 32x32
             nn.Dropout(0.04),
-            ConvResidualDecoderBlock(resnet_start_channels // 16, resnet_start_channels // 64, convt_strides=[2,2], dilation=2),  # -> 128x128
-            nn.Conv2d(resnet_start_channels // 64, 1, kernel_size=3, stride=1, padding=1), # -> 128x128
+            ConvResidualDecoderBlock(resnet_start_channels // 8, resnet_start_channels // 32, convt_strides=[2,2], dilation=2),  # -> 128x128
+            nn.Conv2d(resnet_start_channels // 32, 1, kernel_size=3, stride=1, padding=1), # -> 128x128
             nn.Sigmoid()
         )
 

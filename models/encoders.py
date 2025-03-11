@@ -74,40 +74,49 @@ class MLPEncoder(nn.Module):
   
   
 
-  
-
 
 class ConvMLPEncoder(nn.Module):
   def __init__(
     self, 
     latent_dim=2, 
     img_size=128, 
-    fc_size=128,
+    fc_dims=[128],
     sigmoid=False,
+    n_conv_blocks=3,
+    channels=[1, 16, 32, 64]
   ):
     super(ConvMLPEncoder, self).__init__()
     
-    self.conv = nn.Sequential(
-      ConvResidualEncoderBlock(1, 16, 2), # 128x128 -> 32x32
-      ConvResidualEncoderBlock(16, 32, 2), # 32x32 -> 8x8
-      ConvResidualEncoderBlock(32, 64, 2), # 8x8 -> 2x2
-      nn.Flatten(),
-    )
+    conv_blocks = []
+    
+    for i in range(n_conv_blocks):
+      conv_blocks.append(
+        ConvResidualEncoderBlock(channels[i], channels[i+1], 2)
+      )
+      
+    self.conv = nn.Sequential(*conv_blocks, nn.Flatten())
     
     dummy_input = torch.randn(1, 1, img_size, img_size)
     dummy_input = self.conv(dummy_input)
     self.dim_after_flatten = dummy_input.shape[-1]
     
+    fc_layers = []
+    
+    for i in range(len(fc_dims)):
+      in_dim = self.dim_after_flatten if i == 0 else fc_dims[i-1]
+      fc_layers.extend([
+        nn.Linear(in_dim, fc_dims[i]),
+        nn.BatchNorm1d(fc_dims[i]),
+        nn.Tanh(),
+      ])
+      
     self.fc = nn.Sequential(
-      nn.Linear(self.dim_after_flatten, fc_size),
-      nn.BatchNorm1d(fc_size),
-      nn.Tanh(),
-      nn.Linear(fc_size, latent_dim + 1),
-      nn.BatchNorm1d(latent_dim + 1),
-      nn.Tanh(),
-      nn.Linear(latent_dim + 1, latent_dim),
+      *fc_layers,
+      nn.Linear(fc_dims[-1], latent_dim),
+      nn.BatchNorm1d(latent_dim),
       nn.Sigmoid() if sigmoid else nn.Tanh(),
     )
+  
   
   def forward(self, x):
     x = self.conv(x)

@@ -29,21 +29,20 @@ def train_mnist_model(c: TrainRunConfig):
     torch.cuda.empty_cache()
   
     
-    world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
-    c.distributed = world_size > 1
-    print(f"distributed: {c.distributed}")
-    c.model_partial = functools.partial(c.model_class, **(c.model_args or {}))
+    c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
+    c.distributed = c.world_size > 1
+    c.model_partial = functools.partial(c.model_class, **(c.model_params or {}))
     
     if c.name is None:
       c.name = c.model_class.__name__
     
-    print(f"Training MNIST model {c.name} with {world_size} GPUs")
+    print(f"Training MNIST model {c.name} with {c.world_size} GPUs")
 
     if c.distributed:
       mp.spawn(
         train_process,
         args=(c,),
-        nprocs=world_size,
+        nprocs=c.world_size,
         join=True
       )
     else:
@@ -60,7 +59,7 @@ def train_mnist_model(c: TrainRunConfig):
 def train_process(rank, c: TrainRunConfig):
   try:
     c.rank = rank
-    process_group_setup(rank, c.max_gpus)
+    process_group_setup(rank, c.world_size)
     _train(c)
   except Exception as e:
     logging.error(f"Error in rank {rank}:")
@@ -87,7 +86,7 @@ def _train(c: TrainRunConfig):
     # Get dataloaders
     train_dataloader, val_dataloader, train_sampler, _ = get_mnist_dataloaders(
         batch_size=c.batch_size,
-        world_size=c.max_gpus,
+        world_size=c.world_size,
         rank=c.rank,
     )
 
@@ -98,7 +97,6 @@ def _train(c: TrainRunConfig):
     log_total_train_samples = np.round(np.log2(len(train_dataloader.dataset) * n_epochs)).astype(int)
     batches_per_gpu_epoch = len(train_dataloader)
     
-    print(f"total steps {total_steps}")
     logging.info(f"total steps {total_steps}")
     logging.info(f"Training on 2^{log_total_train_samples} total samples, ~{batches_per_gpu_epoch} batches per epoch per GPU")
     logging.info(f"Validation on {len(val_dataloader.dataset)} samples")
@@ -107,7 +105,7 @@ def _train(c: TrainRunConfig):
     model = c.model_partial().to(device)
     if c.distributed:
       model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-      ddp_model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[c.rank], find_unused_parameters=True)
+      ddp_model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[c.rank])
     else:
       ddp_model = model
 
@@ -125,9 +123,9 @@ def _train(c: TrainRunConfig):
       mkdir_empty(checkpoint_dir)
       if c.save_method == "state_dict":
         # save json of model args, img_size, latent_dim to the checkpoint dir
-        with open(os.path.join(checkpoint_dir, "model_args.json"), "w") as f:
+        with open(os.path.join(checkpoint_dir, "model_params.json"), "w") as f:
           json.dump({
-            "model_args": c.model_args,
+            "model_params": c.model_params,
         }, f)
     
     logging.info(f"Saving model checkpoints to {checkpoint_dir}")
@@ -141,7 +139,7 @@ def _train(c: TrainRunConfig):
             "learning-rate": c.learning_rate,
             "weight-decay": c.weight_decay,
             "model-class": c.model_class.__name__,
-            "model-kwargs": c.model_args,
+            "model-kwargs": c.model_params,
             "n-epochs": c.n_epochs,
             "train-samples-per-epoch": train_samples, # Unique train samples, per epoch.
             "log-total-train-samples": log_total_train_samples, # Train samples times number of epochs
@@ -159,6 +157,8 @@ def _train(c: TrainRunConfig):
       wandb.define_metric("val_loss", step_metric="steps")
       wandb.define_metric("train_loss", step_metric="steps")
     
+    wandb.watch(ddp_model, log="all", log_freq=16)
+    
     # Training loop
     val_loss_eval = None
     checkpoint_num = 0
@@ -170,7 +170,6 @@ def _train(c: TrainRunConfig):
         if c.distributed:
           train_sampler.set_epoch(epoch)
         for i, batch in enumerate(train_dataloader):
-          # print(i)
           step = i + epoch * len(train_dataloader)
           
           # Get the batch
@@ -207,10 +206,12 @@ def _train(c: TrainRunConfig):
           else:
             loss.backward()
 
-          # Log gradients
 
           if is_primary and (step % 16 == 0):
+            # log gradients
             log_gradient_norms(c.run, ddp_model, time=time.time() - start_time)
+            # log input image
+            
 
           if use_mp:
             torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), 0.2)
@@ -234,7 +235,6 @@ def _train(c: TrainRunConfig):
               running_loss = 0
 
           if is_primary:
-            # print(i)
             t.update(1)
 
       time_taken = time.time() - start_time

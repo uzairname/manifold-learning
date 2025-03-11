@@ -14,7 +14,7 @@ def setup_logging(rank:int=None):
     handler = logging.StreamHandler()
 
     # Custom log formatter that works without 'extra' dict
-    formatter = logging.Formatter("%(asctime)s [Rank {rank}] %(message)s" if rank is not None else "%(asctime)s %(message)s")
+    formatter = logging.Formatter(f"%(asctime)s [Rank {rank}] %(message)s" if rank is not None else f"%(asctime)s %(message)s")
 
     handler.setFormatter(formatter)
     logger.addHandler(handler)
