@@ -1,0 +1,20 @@
+import logging
+
+
+def setup_logging(rank:int=None):
+    logger = logging.getLogger()
+    is_primary = rank == 0 or rank is None
+    logger.setLevel(logging.INFO if is_primary else logging.WARNING)  # Only Rank 0 logs INFO
+
+    # Clear any existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+
+    # Create a handler
+    handler = logging.StreamHandler()
+
+    # Custom log formatter that works without 'extra' dict
+    formatter = logging.Formatter("%(asctime)s [Rank {rank}] %(message)s" if rank is not None else "%(asctime)s %(message)s")
+
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)

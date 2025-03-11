@@ -178,3 +178,5 @@ saved_models
 logs
 temp.pt
 wandb
+
+core.*

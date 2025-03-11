@@ -4,8 +4,8 @@
 #SBATCH --ntasks=1
 #SBATCH --gpus=h200:4
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=150G
-#SBATCH --time=04:00:00
+#SBATCH --mem=128G
+#SBATCH --time=05:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=weiahe1@gmail.com
 #SBATCH --output=logs/%x-%j.SLURMout
@@ -13,7 +13,7 @@
 echo "Runnning script"
 cd /mnt/ffs24/home/moham147/experiments/manifold-learning
 source .venv/bin/activate
-python train/decoder.py
+python train/ae.py
 
 # Print resource information
 scontrol show job $SLURM_JOB_ID

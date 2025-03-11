@@ -299,28 +299,16 @@ class ResNetDecoder3(nn.Module):
             nn.Dropout(0.2),
             ConvResidualDecoderBlock(resnet_start_channels // 4, resnet_start_channels // 16, convt_strides=[2,2], dilation=2),  # -> 32x32
             nn.Dropout(0.04),
-            ConvResidualDecoderBlock(resnet_start_channels // 16, resnet_start_channels // 64, convt_strides=[2,2], dilation=4),  # -> 128x128
+            ConvResidualDecoderBlock(resnet_start_channels // 16, resnet_start_channels // 64, convt_strides=[2,2], dilation=2),  # -> 128x128
             nn.Conv2d(resnet_start_channels // 64, 1, kernel_size=3, stride=1, padding=1), # -> 128x128
             nn.Sigmoid()
         )
 
     def forward(self, x):
         x = self.fc(x)
+        if torch.isnan(x).any(): print("NaN in decoder fc output")
         x = self.decoder_conv(x)
+        if torch.isnan(x).any(): print("NaN in decoder conv output")
         return x
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 

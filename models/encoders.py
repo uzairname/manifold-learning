@@ -12,13 +12,13 @@ class ConvResidualEncoderBlock(nn.Module):
         self.downsample1 = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.2),
+            nn.LeakyReLU(0.1),
             
             nn.AvgPool2d(kernel_size=4, stride=2, padding=1), # 128x128 -> 64x64
 
             nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation_rate, dilation=dilation_rate),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.2)
+            nn.LeakyReLU(0.1)
         )
 
         # Second upsampling block
@@ -26,20 +26,20 @@ class ConvResidualEncoderBlock(nn.Module):
 
             nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation_rate, dilation=dilation_rate),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.2),
+            nn.LeakyReLU(0.1),
             
             nn.AvgPool2d(kernel_size=4, stride=2, padding=1), # 64x64 -> 32x32
 
             nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation_rate, dilation=dilation_rate),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.2)
+            nn.LeakyReLU(0.1)
         )
 
         # Skip connection (upsampling by 4 using interpolation)
         self.skip = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
             nn.BatchNorm2d(out_channels),
-            nn.LeakyReLU(0.2),
+            nn.LeakyReLU(0.1),
             nn.AvgPool2d(kernel_size=4, stride=4, padding=1), # 128x128 -> 32x32
         )
 
@@ -53,16 +53,14 @@ class ConvResidualEncoderBlock(nn.Module):
 
 
 
-
-
 class MLPEncoder(nn.Module):
-  def __init__(self, latent_dim=2, img_size=128, **kwargs):
+  def __init__(self, latent_dim=2, img_size=128):
     super(MLPEncoder, self).__init__()
     
     self.fc = nn.Sequential(
       nn.Flatten(),
       nn.Linear(img_size**2, 512),
-      nn.BatchNorm1d(512, momentum=0.5),
+      nn.BatchNorm1d(512),
       nn.ReLU(),
       nn.Dropout(0.3),
       nn.Linear(512, latent_dim),
@@ -72,6 +70,10 @@ class MLPEncoder(nn.Module):
   def forward(self, x):
     x = self.fc(x)
     return x
+
+  
+  
+
   
 
 
@@ -81,10 +83,9 @@ class ConvMLPEncoder(nn.Module):
     latent_dim=2, 
     img_size=128, 
     fc_size=128,
-    sigmoid_scale=1
+    sigmoid=False,
   ):
     super(ConvMLPEncoder, self).__init__()
-    self.sigmoid_scale = sigmoid_scale
     
     self.conv = nn.Sequential(
       ConvResidualEncoderBlock(1, 16, 2), # 128x128 -> 32x32
@@ -100,78 +101,21 @@ class ConvMLPEncoder(nn.Module):
     self.fc = nn.Sequential(
       nn.Linear(self.dim_after_flatten, fc_size),
       nn.BatchNorm1d(fc_size),
-      nn.ReLU(),
-      nn.Linear(fc_size, latent_dim),
+      nn.Tanh(),
+      nn.Linear(fc_size, latent_dim + 1),
+      nn.BatchNorm1d(latent_dim + 1),
+      nn.Tanh(),
+      nn.Linear(latent_dim + 1, latent_dim),
+      nn.Sigmoid() if sigmoid else nn.Tanh(),
     )
   
   def forward(self, x):
     x = self.conv(x)
+    if torch.isnan(x).any(): print("NaN in encoder conv output")
     x = self.fc(x)
-    x = self.sigmoid_scale*(F.sigmoid(x)-0.5)+0.5
+    if torch.isnan(x).any(): print("NaN in encoder fc output")
     return x
 
-  
 
-  
-class DeepMLPEncoder(nn.Module):
-  def __init__(self, latent_dim=2, img_size=128, **kwargs):
-    super(DeepMLPEncoder, self).__init__()
-    
-    self.conv = nn.Sequential(
-      nn.Conv2d(1, 512, kernel_size=3, stride=1, padding=1),  # 128x128 -> 128x128
-      nn.AvgPool2d(kernel_size=4, stride=2, padding=1), # 128x128 -> 64x64
-      nn.Conv2d(512, 32, kernel_size=3, stride=1, padding=1, dilation=2),  # 64x64 -> 64x64
-      nn.AvgPool2d(kernel_size=4, stride=2, padding=1), # 64x64 -> 32x32
-      nn.Flatten(),
-    )
-    
-    dummy_input = torch.randn(1, 1, img_size, img_size)
-    dummy_input = self.conv(dummy_input)
-    self.dim_after_flatten = dummy_input.shape[-1]
-    
-    self.fc = nn.Sequential(
-      nn.Linear(self.dim_after_flatten, 256),
-      nn.LayerNorm(256),
-      nn.ReLU(),
-      nn.Dropout(0.3),
-      nn.Linear(256, 256),
-      nn.LayerNorm(256),
-      nn.ReLU(),
-      nn.Dropout(0.3),
-      nn.Linear(256, 128),
-      nn.LayerNorm(128),
-      nn.ReLU(),
-      nn.Dropout(0.3),
-      nn.Linear(128, 64),
-      nn.LayerNorm(64),
-      nn.ReLU(),
-      nn.Dropout(0.3),
-      nn.Linear(64, 32),
-      nn.LayerNorm(32),
-      nn.ReLU(),
-      nn.Dropout(0.3),
-      nn.Linear(32, 16),
-      nn.LayerNorm(16),
-      nn.ReLU(),
-      nn.Dropout(0.3),
-      nn.Linear(16, 8),
-      nn.LayerNorm(8),
-      nn.ReLU(),
-      nn.Dropout(0.3),
-      nn.Linear(8, 4),
-      nn.LayerNorm(4),
-      nn.ReLU(),
-      nn.Dropout(0.3),
-      nn.Linear(4, latent_dim),
-      nn.Sigmoid(),
-    )
-    
-  def forward(self, x):
-    x = self.conv(x)
-    x = self.fc(x)
-    return x
-  
-  
-  
 
   

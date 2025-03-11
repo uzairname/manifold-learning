@@ -41,7 +41,7 @@ def load_model_state_dict(
   model_class: nn.Module,
   img_size=128,
   latent_dim=2,
-  model_args:dict={},
+  model_args:dict=None,
   postfix='',
   name='model',
   checkpoint=None
@@ -100,7 +100,8 @@ def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], mode
     - image, label1d, label2d, latent, reconstructed
   """
   with torch.no_grad():
-    for _, clean_imgs, label2d, label1d in dataloader:
+    for noisy_imgs, clean_imgs, label2d, label1d in dataloader:
+      noisy_imgs = noisy_imgs.to(device)
       images = clean_imgs.to(device)
       label1d = label1d.to(device)
       label2d = label2d.to(device)
@@ -121,7 +122,7 @@ def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], mode
       for i in range(images.size(0)):
         latent = latents[i] if latents is not None else None
         reconstructed = reconstructeds[i] if reconstructeds is not None else None
-        yield images[i], label1d[i], label2d[i], latent, reconstructed
+        yield noisy_imgs[i], images[i], label1d[i], label2d[i], latent, reconstructed
 
 
 
@@ -223,28 +224,32 @@ def visualize_reconstruction(type_, model, dataloader, latent_dim=2):
 
   n=6
   s=3
-  fig, axs = plt.subplots(n, 2, figsize=(2*s, n*s))
+  fig, axs = plt.subplots(n, 3, figsize=(3*s, n*s))
   
   if type_ == 'decoder':
     fig.suptitle('Decoder Reconstructions')
   elif type_ == 'autoencoder':
     fig.suptitle('Autoencoder Reconstructions')
 
-  for i, (img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader, latent_dim=latent_dim)):
+  for i, (noisy_img, img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader, latent_dim=latent_dim)):
     if i >= n:
       break
     
-    loss = torch.nn.functional.mse_loss(img, reconstructed)
+    loss = torch.nn.functional.smooth_l1_loss(img, reconstructed)
     
     unnormalized_label2d = (label2d * torch.tensor([12, 60]).to(device).float())
     
-    axs[i,0].imshow(img.squeeze().cpu(), cmap='gray')
-    axs[i,0].set_title(f"Original: {unnormalized_label2d[0]:.0f}h{unnormalized_label2d[1]:.0f}m")
+    axs[i,0].imshow(noisy_img.squeeze().cpu(), cmap='gray')
+    axs[i,0].set_title("Noisy Image")
     axs[i,0].axis('off')
     
-    axs[i,1].imshow(reconstructed.squeeze().cpu(), cmap='gray')
-    axs[i,1].set_title(f"Loss: {loss:.4f}")
+    axs[i,1].imshow(img.squeeze().cpu(), cmap='gray')
+    axs[i,1].set_title(f"Original: {unnormalized_label2d[0]:.0f}h{unnormalized_label2d[1]:.0f}m")
     axs[i,1].axis('off')
+    
+    axs[i,2].imshow(reconstructed.squeeze().cpu(), cmap='gray')
+    axs[i,2].set_title(f"Loss: {loss:.4f}")
+    axs[i,2].axis('off')
 
   plt.show()
 
