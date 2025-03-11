@@ -3,5 +3,5 @@ from setuptools import setup
 setup(
   name="manifold-learning",
   version="0.1",
-  packages=["datasets", "models", "train", "mnist"], 
+  packages=["datasets", "models", "train", "autoencoder", "mnist1", "utils"], 
 )

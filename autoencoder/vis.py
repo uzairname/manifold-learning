@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import os
 
 from tqdm import tqdm
-from config import MODELS_DIR
+from utils.config import MODELS_DIR
 import typing
 from torch import nn
 from functools import partial

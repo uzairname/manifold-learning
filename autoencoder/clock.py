@@ -22,7 +22,9 @@ class TrainRunConfig:
   model_params: dict = None
 
   # multiprocessing
+  max_gpus: int = None
   rank: int = None
+  distributed: bool = True
   world_size: int = None
 
   # logging

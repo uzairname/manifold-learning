@@ -45,7 +45,6 @@ if __name__ == "__main__":
           decoder_args=dict(
             resnet_start_channels=128,
             fc_size=512,
-            conv_start_channels=64,
           ),
         ),
         data_config=ClockConfig(

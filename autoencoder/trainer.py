@@ -16,8 +16,9 @@ import wandb.wandb_run
 import logging
 from tqdm import tqdm
 
-from config import MODELS_DIR
+from utils.config import MODELS_DIR
 from autoencoder.clock import TrainRunConfig, eval_and_save_model, get_dataloaders
+from utils.logging import setup_logging
 from utils.train_utils import log_gradient_norms
 from utils.utils import mkdir_empty
 from utils.multiprocessing_utils import process_group_cleanup, process_group_setup
@@ -28,8 +29,10 @@ DATASET_NAME = "clock"
 def train_clock_model(c: TrainRunConfig):
     torch.cuda.empty_cache()
 
-    c.world_size = c.world_size or torch.cuda.device_count()
-    c.model_partial = functools.partial(c.model_class, img_size=c.img_size, latent_dim=c.latent_dim, **(c.model_params or {}))
+    c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
+    c.distributed = c.world_size > 1
+    
+    c.model_partial = functools.partial(c.model_class, **(c.model_params or {}))
     c.dataset_config.img_size = c.img_size
     
     if c.name is None:
@@ -37,13 +40,21 @@ def train_clock_model(c: TrainRunConfig):
       
     print(f"Training model {c.name} with {c.world_size} GPUs")
 
-    mp.spawn(
-      train_process,
-      args=(c,),
-      nprocs=c.world_size,
-      join=True
-    )
+    if c.distributed:
+      mp.spawn(
+        train_process,
+        args=(c,),
+        nprocs=c.world_size,
+        join=True
+      )
+    else:
+      # 1 or 0 gpus
+      setup_logging()
+      c.rank = None
+      _train(c)
     
+    if c.run is not None:
+      c.run.finish()
     print('Done training')
 
 
@@ -66,7 +77,11 @@ def train_process(rank, c: TrainRunConfig):
 
 def _train(c: TrainRunConfig):
     torch.manual_seed(42)     
-    device = torch.device(f"cuda:{c.rank}")
+    
+    if c.distributed:
+      device = torch.device(f"cuda:{c.rank}")
+    else:
+      device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.autograd.set_detect_anomaly(True)
     
     # Get dataloaders
@@ -105,7 +120,10 @@ def _train(c: TrainRunConfig):
     # Initialize model and wrap with DistributedDataParallel
     model = c.model_partial().to(device)
     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    ddp_model = nn.parallel.DistributedDataParallel(model, device_ids=[c.rank])
+    if c.distributed:
+      ddp_model = nn.parallel.DistributedDataParallel(model, device_ids=[c.rank])
+    else:
+      ddp_model = model
 
     if c.optimizer is not None:
       optimizer = c.optimizer(model)
@@ -114,7 +132,7 @@ def _train(c: TrainRunConfig):
 
     criterion = c.loss_fn
 
-    scaler = torch.amp.GradScaler()
+    scaler = torch.amp.GradScaler(device=device.type)
 
     # Checkpoint directory
     checkpoint_dir = os.path.join(MODELS_DIR, c.name, f"{c.latent_dim}-i{c.img_size}-d{log_total_train_samples}{c.save_path_suffix or ''}")
@@ -179,7 +197,8 @@ def _train(c: TrainRunConfig):
     start_time = time.time()
     with tqdm(total=total_steps, disable=(c.rank != 0)) as t:
       for epoch in range(n_epochs):
-        train_sampler.set_epoch(epoch)
+        if c.distributed:
+          train_sampler.set_epoch(epoch)
         for i, batch in enumerate(train_dataloader):
             step = i + epoch * len(train_dataloader)
           
@@ -204,7 +223,7 @@ def _train(c: TrainRunConfig):
                 
 
             # Forward pass with AMP broadcast for mixed precision
-            with torch.amp.autocast(device_type='cuda'):
+            with torch.amp.autocast(device_type=device.type):
               pred = ddp_model(input)
               loss = criterion(pred, output)
 

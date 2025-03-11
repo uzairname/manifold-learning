@@ -120,9 +120,7 @@ class ConvMLPEncoder(nn.Module):
   
   def forward(self, x):
     x = self.conv(x)
-    if torch.isnan(x).any(): print("NaN in encoder conv output")
     x = self.fc(x)
-    if torch.isnan(x).any(): print("NaN in encoder fc output")
     return x
 
 

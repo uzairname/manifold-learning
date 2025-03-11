@@ -114,7 +114,7 @@ def _train(c: TrainRunConfig):
     optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=c.learning_rate, weight_decay=c.weight_decay)
 
     # AMP initialization
-    scaler = torch.amp.GradScaler()
+    scaler = torch.amp.GradScaler(device.type)
 
     # Save file name
     # Checkpoint directory
@@ -188,7 +188,7 @@ def _train(c: TrainRunConfig):
           
           if use_mp:
             # Forward pass with AMP broadcast for mixed precision
-            with torch.amp.autocast(device_type='cuda'):
+            with torch.amp.autocast(device_type=device.type):
               pred = ddp_model(imgs)
               loss = criterion(pred, labels)
           else:

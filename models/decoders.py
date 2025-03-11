@@ -277,24 +277,24 @@ class ResNetDecoder3(nn.Module):
       latent_dim=2, 
       img_size=128, 
       resnet_start_channels=256,
-      conv_start_channels=16,
       fc_size=128,
     ):
         super().__init__()
 
         self.dim_before_conv = (4 * img_size) // 128
+        
+        fc_size = resnet_start_channels*self.dim_before_conv**2 // 2
 
         self.fc = nn.Sequential(
             nn.Linear(latent_dim, fc_size),
             nn.BatchNorm1d(fc_size),
             nn.ReLU(),
-            nn.Linear(fc_size, conv_start_channels*self.dim_before_conv**2),
+            nn.Linear(fc_size, resnet_start_channels*self.dim_before_conv**2),
             nn.ReLU(),
-            nn.Unflatten(1, (conv_start_channels, self.dim_before_conv, self.dim_before_conv)), # 4x4
+            nn.Unflatten(1, (resnet_start_channels, self.dim_before_conv, self.dim_before_conv)), # 4x4
         )
 
         self.decoder_conv = nn.Sequential(
-            nn.Conv2d(conv_start_channels, resnet_start_channels, kernel_size=3, stride=1, padding=1), # -> 4x4
             ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2, convt_strides=[1,2]), # -> 8x8
             nn.Dropout(0.2),
             ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 8, convt_strides=[2,2], dilation=2),  # -> 32x32

@@ -20,7 +20,6 @@ if __name__ == "__main__":
               model_params=dict(
                 resnet_start_channels=resnet_start_channels,
                 fc_size=fc_size,
-                conv_start_channels=64,
               ),
               img_size=128,
               data_config=ClockConfig(),

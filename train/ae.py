@@ -31,17 +31,16 @@ if __name__ == "__main__":
         type="autoencoder",
         loss_fn=nn.SmoothL1Loss(),
         latent_dim=2,
-        img_size=256,
+        img_size=64,
         model_params=dict(
           encoder_args=dict(
-            fc_dims=[1024, 512, 256],
-            n_conv_blocks=3,
+            fc_dims=[512, 256],
+            n_conv_blocks=2,
             channels=[1, 32, 64, 128],
           ),
           decoder_args=dict(
             resnet_start_channels=384,
             fc_size=1024,
-            conv_start_channels=64,
           ),
         ),
         data_config=ClockConfig(
@@ -50,7 +49,7 @@ if __name__ == "__main__":
           minute_hand_start=1/3,
         ),
         dataset_config=ClockDatasetConfig(
-          data_size=2**24,
+          data_size=2**14,
           augment=dict(
             noise_std=0.01,
             # blur=1.0
