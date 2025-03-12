@@ -1,8 +1,8 @@
 from datasets.clock import ClockConfig, ClockDatasetConfig
 from models.encoders import ConvMLPEncoder, MLPEncoder
-from autoencoder.clock import TrainRunConfig
-from autoencoder.clock import TrainRunConfig
-from autoencoder import train_clock_model
+from clock.utils import TrainRunConfig
+from clock.utils import TrainRunConfig
+from clock import train_clock_model
 import numpy as np
 
 if __name__ == "__main__":
@@ -37,7 +37,7 @@ if __name__ == "__main__":
               learning_rate=learning_rate,
               weight_decay=1e-2,
               n_checkpoints=16,
-              group="test",
+              experiment_group="test",
           )
       
           train_clock_model(config)

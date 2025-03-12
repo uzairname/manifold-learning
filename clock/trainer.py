@@ -14,18 +14,18 @@ import os
 from datasets.clock import get_dataloaders
 import psutil
 import time
-import wandb
-import wandb.wandb_run
 import logging
 from tqdm import tqdm
 
 from utils.config import MODELS_DIR
-from autoencoder.clock import TrainRunConfig, eval_and_save_model, eval_model
+from clock.utils import TrainRunConfig, eval_and_save_model, eval_model
 from utils.logging import setup_logging
 from utils.train_utils import log_gradient_norms
 from utils.utils import mkdir_empty
 from utils.multiprocessing_utils import process_group_cleanup, process_group_setup
 
+import neptune
+from neptune.utils import stringify_unsupported
 
 DATASET_NAME = "clock"
 
@@ -60,7 +60,7 @@ def train_clock_model(c: TrainRunConfig):
       _train(c)
     
     if c.run is not None:
-      c.run.finish()
+      c.run.stop()
     print('Done training')
 
 
@@ -73,23 +73,23 @@ def train_process(rank, c: TrainRunConfig):
     logging.error(f"Error in rank {rank}:")
     logging.error(e, exc_info=True)
   finally:
-    dist.barrier(device_ids=[rank])
     process_group_cleanup()
-    print(f"Cleaned up {rank}")
     
     if c.run is not None:
-      c.run.finish()
+      c.run.stop()
+  
+
 
 def _train(c: TrainRunConfig):
   torch.manual_seed(42)     
-  
+
   if c.distributed:
     device = torch.device(f"cuda:{c.rank}")
   else:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
   torch.autograd.set_detect_anomaly(True)
-  
+
   # Get dataloaders
   train_dataloader, val_dataloader, train_sampler, _ = get_dataloaders(
       data_config=c.data_config,
@@ -113,9 +113,6 @@ def _train(c: TrainRunConfig):
   # Total number of batches this gpu will see
   total_steps = len(train_dataloader) * n_epochs
   
-  # Number of unique samples in the training set
-  train_samples = len(train_dataloader.dataset)
-  
   # Number of total samples seen by the model (train_samples * n_epochs) is 2^log_total_train_samples
   log_total_train_samples = np.round(np.log2(len(train_dataloader.dataset) * n_epochs)).astype(int)
   
@@ -123,8 +120,8 @@ def _train(c: TrainRunConfig):
   
   # Checkpoint every n optimization steps/batches
   checkpoint_frequency = np.max((total_steps // c.n_checkpoints, 1)) if c.n_checkpoints is not None else None
-  n_eval = 64
-  eval_frequency = np.max((total_steps // n_eval, 1))
+  
+  eval_frequency = np.max((total_steps // c.n_eval, 1))
   
   # Initialize model and wrap with DistributedDataParallel
   model = c.model_partial().to(device)
@@ -144,7 +141,8 @@ def _train(c: TrainRunConfig):
   scaler = torch.amp.GradScaler(device=device.type)
 
   # Checkpoint directory
-  checkpoint_dir = os.path.join(MODELS_DIR, c.name, f"{c.latent_dim}-i{c.dataset_config.img_size}-d{log_total_train_samples}{c.save_path_suffix or ''}")
+  label = c.label or ""
+  checkpoint_dir = os.path.join(MODELS_DIR, c.name, (f"{c.experiment_group or ''}-d{log_total_train_samples}-{label}"))
   if c.rank == 0:
     mkdir_empty(checkpoint_dir)
     if c.save_method == "state_dict":
@@ -156,44 +154,35 @@ def _train(c: TrainRunConfig):
           "model_params": c.model_params,
           "img_size": c.dataset_config.img_size,
           "latent_dim": c.latent_dim,
+          "type": c.type,
             }, f, indent=4)
-        
+
   logging.info(f"Saving model checkpoints to {checkpoint_dir}")
   
-  if c.log_wandb and c.rank == 0:
-    c.run = wandb.init(
-      name=c.name,
-      project="manifold-learning",
-      group=c.group,
-      config={
-          "latent-dim": c.latent_dim,
-          "data-config": c.data_config,
-          "dataset-config": c.dataset_config,
-          "model-params": c.model_params,
-          "learning-rate": c.learning_rate,
-          "weight-decay": c.weight_decay,
-          "img-size": c.dataset_config.img_size,
-          "model-class": c.model_class.__name__,
-          "n-epochs": c.n_epochs,
-          "train-samples-per-epoch": train_samples, # Unique train samples, per epoch.
-          "log-total-train-samples": log_total_train_samples, # Train samples times number of epochs
-          "n-params": sum(p.numel() for p in c.model_partial().parameters()),
-          "batch-size": c.batch_size,
-          "type": c.type,
-          "loss-fn": c.loss_fn,
-          "dataset": DATASET_NAME,
-      },
-      notes=c.notes,
-      tags=c.tags
+  if c.log and c.rank == 0:
+    c.run = neptune.init_run(
+      project = os.getenv("NEPTUNE_PROJECT"),
+      api_token = os.getenv("NEPTUNE_API_TOKEN"),
     )
     
-    log_images = False
-  
-    wandb.define_metric("steps")
-    wandb.define_metric("time")
-    wandb.define_metric("val_loss", step_metric="steps")
-    wandb.define_metric("train_loss", step_metric="steps")
+    c.run['config'] = stringify_unsupported({
+      "group": c.experiment_group,
+      "latent-dim": c.latent_dim,
+      "data-config": asdict(c.data_config) if c.data_config is not None else {},
+      "dataset-config": asdict(c.dataset_config) if c.dataset_config is not None else {},
+      "type": c.type,
+      "class": c.model_class.__name__,
+      "n_params": sum(p.numel() for p in model.parameters()),
+      "model_params": c.model_params,
+      "learning-rate": c.learning_rate,
+      "weight-decay": c.weight_decay,
+      "n-epochs": n_epochs,
+      "batch-size": c.batch_size,
+      "loss-fn": c.loss_fn.__class__.__name__,
+      "checkpoint-dir": checkpoint_dir,
+    })
     
+    log_images = False
     
   logging.info(f"total steps {total_steps}")
   logging.info(f"Data size {c.dataset_config.data_size}, batch size {c.batch_size}, epochs {n_epochs}")
@@ -210,8 +199,53 @@ def _train(c: TrainRunConfig):
       if c.distributed:
         train_sampler.set_epoch(epoch)
       for i, batch in enumerate(train_dataloader):
+
+          # Logging
+
           step = i + epoch * len(train_dataloader)
+
+          # Log the loss
+          if c.rank == 0 and (step % 16 == 0) and step > 0:
+              mem = psutil.virtual_memory()
+              avg_loss = running_loss / 16
+              t.set_description_str(f"Loss={avg_loss:.5f}" + (f" Val Loss={val_loss:.5f}" if val_loss is not None else ""))
+              t.set_postfix(epoch=f"{epoch}/{n_epochs}",batch=f"{i}/{batches_per_gpu_epoch}", gpus=f"{c.world_size}", mem=f"{mem.percent:.2f}%")
+              if c.run is not None:
+                  c.run['train/train_loss'].append(
+                    value=avg_loss,
+                    step=time.time() - start_time
+                  )
+              running_loss = 0
         
+
+          if c.rank == 0 and (step % eval_frequency == 0):   
+            # Evaluate the model
+            val_loss = eval_model(model=training_model.module, type_=c.type, latent_dim=c.latent_dim, loss_fn=c.loss_fn, val_data=val_data, device=device)
+            if c.run is not None:
+              c.run["train/val_loss"].append(
+                value=val_loss,
+                step=time.time() - start_time
+              )
+
+            # log image
+            if c.run is not None and log_images:
+              c.run['images'].append(neptune.types.File.as_image(imgs[0].cpu()))
+
+          # Save model checkpoint
+          if c.rank == 0 and checkpoint_frequency is not None and (step % checkpoint_frequency == 0):
+            val_loss = eval_and_save_model(c, training_model.module, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), val_data)
+            checkpoint_num += 1
+            with open(os.path.join(checkpoint_dir, f"{checkpoint_num}.json"), "w") as f:
+              json.dump({
+                "step": step  ,
+                "epoch": epoch,
+                "batch": i,
+                "val_loss": val_loss,
+              }, f, indent=4)
+
+
+          # Optimization step
+
           imgs, clean_imgs, labels2d, labels1d = batch
 
           labels = labels1d.unsqueeze(1) if c.latent_dim == 1 else labels2d
@@ -225,24 +259,6 @@ def _train(c: TrainRunConfig):
               input = imgs.to(device)
               output = clean_imgs.to(device)
               
-          # Evaluate the model
-          if c.rank == 0 and (step % eval_frequency == 0):
-            val_loss = eval_model(c, training_model, val_data, device)
-            if c.run is not None:
-              c.run.log({"val_loss": val_loss, "steps": step, "time": time.time() - start_time})
-              
-          # Save model checkpoint
-          if c.rank == 0 and checkpoint_frequency is not None and (step % checkpoint_frequency == 0):
-            val_loss = eval_and_save_model(c, training_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), val_data)
-            checkpoint_num += 1
-            with open(os.path.join(checkpoint_dir, f"{checkpoint_num}.json"), "w") as f:
-              json.dump({
-                "step": step,
-                "epoch": epoch,
-                "batch": i,
-                "val_loss": val_loss,
-              }, f, indent=4)
-              
           # Forward pass with AMP broadcast for mixed precision
           with torch.amp.autocast(device_type=device.type):
             pred = training_model(input)
@@ -251,49 +267,35 @@ def _train(c: TrainRunConfig):
           # Average loss across all GPUs for logging
           loss_tensor = loss.clone().detach()
           dist.all_reduce(loss_tensor, op=dist.ReduceOp.AVG)
+          running_loss += loss_tensor.item()
           
           scaler.scale(loss).backward()
           scaler.unscale_(optimizer)
 
           # Log gradient norms
           if (c.rank == 0) and (step % 16 == 0):
-            log_gradient_norms(c.run, training_model, time=time.time() - start_time)
-            # log image
-            if c.run is not None and log_images:
-              c.run.log({"image": wandb.Image(imgs[0].cpu(), caption=f"Label:{labels2d[0]}"), "steps": step, "time": time.time() - start_time})
+            log_gradient_norms(run=c.run, model=training_model, time=time.time() - start_time)
               
-
           torch.nn.utils.clip_grad_norm_(training_model.parameters(), 0.2)
           scaler.step(optimizer)
           scaler.update()
           optimizer.zero_grad()
 
-          # Log the loss
-          running_loss += loss_tensor.item()
-          if (c.rank == 0) and (step % 16 == 0):
-              mem = psutil.virtual_memory()
-              avg_loss = running_loss / 16
-              t.set_description_str(f"Loss={avg_loss:.5f}" + (f" Val Loss={val_loss:.5f}" if val_loss is not None else ""))
-              t.set_postfix(epoch=f"{epoch}/{n_epochs}",batch=f"{i}/{batches_per_gpu_epoch}", gpus=f"{c.world_size}", mem=f"{mem.percent:.2f}%")
-              if c.run is not None:
-                  c.run.log({"train_loss": avg_loss, "steps": step, "time": time.time() - start_time})
-              running_loss = 0
-
           if c.rank == 0:
             t.update(1) 
-            
+                        
   time_taken = time.time() - start_time
 
   if c.run is not None:
-    c.run.summary["time_taken"] = time_taken
+    c.run['summary/time_taken'] = time_taken
   # Evaluate and save final loss              
   if c.rank == 0:
-      eval_and_save_model(c, training_model, device, os.path.join(checkpoint_dir, "final.pt"), val_data)
+      val_loss = eval_and_save_model(c, training_model, device, os.path.join(checkpoint_dir, "final.pt"), val_data)
       if c.run is not None:
-          c.run.log({"val_loss": val_loss, "steps": step})
+        c.run['summary/val_loss'] = val_loss
+
       logging.info(f'Model checkpoints saved to {checkpoint_dir}')
-      
-  return
+    
 
 """
 torchrun --nproc_per_node=4 train.py

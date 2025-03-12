@@ -1,7 +1,7 @@
 from datasets.clock import ClockConfig, ClockDatasetConfig
 from models.autoencoders import MLPResnetAutoencoder
-from autoencoder.clock import TrainRunConfig
-from autoencoder import train_clock_model
+from clock.utils import TrainRunConfig
+from clock import train_clock_model
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,7 +15,7 @@ def optimizer(model: nn.Module):
   return torch.optim.AdamW(
     [
       {"params": encoder_params, "lr": 1e-3, "weight_decay": 1e-2},
-      {"params": decoder_params, "lr": 1e-2, "weight_decay": 1e-3},
+      {"params": decoder_params, "lr": 5e-3, "weight_decay": 1e-3},
     ],
   )
 
@@ -26,23 +26,24 @@ if __name__ == "__main__":
   for cls in [ MLPResnetAutoencoder ]:
     
     config = TrainRunConfig(
+        experiment_group="A",
         model_class=cls,
         type="autoencoder",
         latent_dim=2,
         model_params=dict(
           encoder_args=dict(
             n_conv_blocks=2,
-            channels=[1, 32, 64],
-            fc_dims=[256, 128],
+            channels=[1, 64, 128],
+            fc_dims=[512, 256],
           ),
           decoder_args=dict(
-            fc_size=256,
-            resnet_start_channels=128,
+            fc_size=1024,
+            resnet_start_channels=256,
           ),
         ),
         data_config=ClockConfig(),
         dataset_config=ClockDatasetConfig(
-          data_size=2**24,
+          data_size=2**22,
           img_size=64,
           augment=dict(
             noise_std=0.01,

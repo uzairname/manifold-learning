@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import io
 import wandb
-from wandb import wandb_run
+from scripts.delete_unused_columns import wandb_run
 import torch
 import torch.nn as nn
 import typing

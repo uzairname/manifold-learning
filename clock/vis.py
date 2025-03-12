@@ -9,7 +9,6 @@ import typing
 from torch import nn
 from functools import partial
 from sklearn.decomposition import PCA
-import json
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -37,44 +36,6 @@ def load_model_script(
     model.eval()
     
     return model
-
-
-def load_model_state_dict(
-  model_class: nn.Module,
-  img_size=128,
-  latent_dim=2,
-  model_params:dict=None,
-  postfix='',
-  name='model',
-  checkpoint=None
-):
-  """
-  Loads a clock model by state dict and architecture
-  """
-  
-  model_dir = f"{latent_dim}-i{img_size}-{postfix}"
-  
-  if checkpoint is None:
-    model_path = os.path.join(MODELS_DIR, name, model_dir, f"final.pt")
-  else:
-    model_path = os.path.join(MODELS_DIR, name, model_dir, f"{checkpoint}.pt")
-  
-  if not model_params:
-    # load model args from json
-    with open(os.path.join(MODELS_DIR, name, model_dir, 'model_params.json'), 'r') as f:
-      model_params = json.load(f).get('model_params', {})
-  
-  model = model_class(**model_params).to(device)
-  state_dict = torch.load(model_path, map_location=device)
-  
-  if 'model' in state_dict:
-    state_dict = state_dict['model']
-  
-  model.load_state_dict(state_dict)
-  model.eval()
-  
-  return model
-
 
 
 def print_model_parameters(cls: nn.Module, details=False):

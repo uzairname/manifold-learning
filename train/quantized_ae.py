@@ -1,8 +1,8 @@
 from datasets.clock import ClockConfig, ClockDatasetConfig
 from models.autoencoders import MLPResnetAutoencoder
-from autoencoder.clock import TrainRunConfig
-from autoencoder.clock import TrainRunConfig
-from autoencoder import train_clock_model
+from clock.utils import TrainRunConfig
+from clock.utils import TrainRunConfig
+from clock import train_clock_model
 import torch
 import torch.nn as nn
 import functools
@@ -65,7 +65,6 @@ if __name__ == "__main__":
         weight_decay=1e-4,
         n_checkpoints=16,
         loss_fn=nn.SmoothL1Loss(),
-        save_path_suffix='q',
     )
   
     train_clock_model(config)

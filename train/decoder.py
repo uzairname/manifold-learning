@@ -1,20 +1,21 @@
 from datasets.clock import ClockConfig, ClockDatasetConfig
 from models.decoders import ResNetDecoder, ResNetDecoder2, ResNetDecoder3
-from autoencoder import train_clock_model
+from clock import train_clock_model
 import numpy as np
 import torch.nn as nn
 
-from autoencoder.clock import TrainRunConfig
+from clock.utils import TrainRunConfig
 
 
 if __name__ == "__main__":
   for cls in [ ResNetDecoder3 ]:
     for fc_size, resnet_start_channels in [[1024, 384]]:
-      for total_samples in [2**22]:
+      for total_samples in [2**20]:
           data_size=total_samples # for infinite data, 1 epoch
 
-          for batch_size in [128]:
+          for batch_size in [64, 128, 256]:
             config = TrainRunConfig(
+              experiment_group="B",
               type="decoder",
               model_class=cls,
               model_params=dict(
@@ -23,21 +24,15 @@ if __name__ == "__main__":
               ),
               data_config=ClockConfig(),
               dataset_config=ClockDatasetConfig(
-                augment=dict(
-                  noise_std=0.01,
-                  blur=1
-                ),
                 data_size=data_size,
-                img_size=128,
+                img_size=64,
               ),
               n_epochs=total_samples//data_size,
               batch_size=batch_size,
               latent_dim=2,
-              learning_rate=1e-4,
+              learning_rate=1e-4*batch_size/128,
               weight_decay=1e-4,
-              loss_fn=nn.L1Loss(),
+              loss_fn=nn.SmoothL1Loss(),
               n_checkpoints=16,
-              save_path_suffix=f"",
             )
             train_clock_model(config)
-

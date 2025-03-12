@@ -5,7 +5,7 @@ import torch.nn as nn
 from wandb.wandb_run import Run
 
 
-def log_gradient_norms(run: Run | None, model: nn.Module, time=None):
+def log_gradient_norms(model: nn.Module, run: Run=None, time=None):
 
   # logging.info("Logging gradient distribution")
   for name, param in model.named_parameters():
@@ -25,10 +25,18 @@ def log_gradient_norms(run: Run | None, model: nn.Module, time=None):
   std_grad = np.std(grad_norms)
   mean_grad = np.mean(grad_norms)
   max_grad = np.max(grad_norms)
-  min_grad = np.min(grad_norms)
 
   if run is not None:
-    run.log({f"grad_norm_std": std_grad,
-             f"grad_norm_mean": mean_grad,
-             f"grad_norm_max": max_grad,
-              "time": time})
+    run['train/grad_norms/std'].append(
+      value=std_grad,
+      step=time
+    )
+    run['train/grad_norms/mean'].append(
+      value=mean_grad,
+      step=time
+    )
+    run['train/grad_norms/max'].append(
+      value=max_grad,
+      step=time
+    )
+    
