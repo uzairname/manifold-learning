@@ -98,9 +98,6 @@ class ConvResidualDecoderBlock(nn.Module):
 #         return x
 
 
-
-
-
 class ConvOnlyResidualDecoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, dilation_rate=1):
         super().__init__()
@@ -309,6 +306,6 @@ class ResNetDecoder3(nn.Module):
         if torch.isnan(x).any(): print("NaN in decoder fc output")
         x = self.decoder_conv(x)
         if torch.isnan(x).any(): print("NaN in decoder conv output")
-        return x
+        return x*0 + torch.randn_like(x)*0.1
 
 

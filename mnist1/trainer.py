@@ -26,9 +26,8 @@ MODELS_DIR="saved_models/mnist"
 DATASET_NAME="mnist"
 
 def train_mnist_model(c: TrainRunConfig):
-    torch.cuda.empty_cache()
   
-    
+  
     c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
     c.distributed = c.world_size > 1
     c.model_partial = functools.partial(c.model_class, **(c.model_params or {}))
@@ -38,12 +37,13 @@ def train_mnist_model(c: TrainRunConfig):
     
     print(f"Training MNIST model {c.name} with {c.world_size} GPUs")
 
+    torch.cuda.empty_cache()
     if c.distributed:
       mp.spawn(
         train_process,
         args=(c,),
         nprocs=c.world_size,
-        join=True
+        join=True,
       )
     else:
       setup_logging()
@@ -73,6 +73,7 @@ def train_process(rank, c: TrainRunConfig):
 
 def _train(c: TrainRunConfig):
     torch.manual_seed(42) 
+  
     if c.distributed:
       device = torch.device(f"cuda:{c.rank}")
     else:
@@ -108,7 +109,6 @@ def _train(c: TrainRunConfig):
       ddp_model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[c.rank])
     else:
       ddp_model = model
-
 
     criterion = c.loss_fn
     optimizer = torch.optim.AdamW(ddp_model.parameters(), lr=c.learning_rate, weight_decay=c.weight_decay)
@@ -157,10 +157,10 @@ def _train(c: TrainRunConfig):
       wandb.define_metric("val_loss", step_metric="steps")
       wandb.define_metric("train_loss", step_metric="steps")
     
-    wandb.watch(ddp_model, log="all", log_freq=16)
+      wandb.watch(ddp_model, log="all", log_freq=16)
     
     # Training loop
-    val_loss_eval = None
+    val_loss = None
     checkpoint_num = 0
     running_loss = 0
     
@@ -176,13 +176,23 @@ def _train(c: TrainRunConfig):
           imgs, labels = batch
           imgs = imgs.to(device)
           labels = labels.to(device)
-              
+          
+          # randomize some labels in the batch
+          randomize_prob = 0.1
+          for j in range(len(labels)):
+            if np.random.rand() < randomize_prob:
+              labels[j] = torch.randint(0, 10, (1,)).item()
+          
+
           # Save model checkpoint before optimization step
           if is_primary and checkpoint_every is not None and (step % checkpoint_every == 0):
-            val_loss_eval = eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), criterion, val_dataloader)
+            val_loss, acc = eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), criterion, val_dataloader)
+            val_loss = None
             checkpoint_num += 1
             if c.run is not None:
-              c.run.log({"val_loss": val_loss_eval, "steps": step, "time": time.time() - start_time})
+              c.run.log({"val_loss": val_loss, "steps": step, "time": time.time() - start_time})
+
+          print(f"evaluated model. {c.rank}")
 
           use_mp = True
           
@@ -194,25 +204,25 @@ def _train(c: TrainRunConfig):
           else:
             pred = ddp_model(imgs)
             loss = criterion(pred, labels)
+            
 
           # Average loss across all GPUs for logging
           loss_tensor = loss.clone().detach()
           if c.distributed:
             dist.all_reduce(loss_tensor, op=dist.ReduceOp.AVG)
           
+
           if use_mp:
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
           else:
             loss.backward()
 
-
           if is_primary and (step % 16 == 0):
             # log gradients
             log_gradient_norms(c.run, ddp_model, time=time.time() - start_time)
             # log input image
             
-
           if use_mp:
             torch.nn.utils.clip_grad_norm_(ddp_model.parameters(), 0.2)
             scaler.step(optimizer)
@@ -228,7 +238,7 @@ def _train(c: TrainRunConfig):
           if is_primary and (step % 1 == 0):
               mem = psutil.virtual_memory()
               avg_loss = running_loss / 16
-              t.set_description_str(f"Loss={avg_loss:.5f}" + (f" Val Loss={val_loss_eval:.5f}" if val_loss_eval is not None else ""))
+              t.set_description_str(f"Loss={avg_loss:.5f}" + (f" Val Loss={val_loss:.5f}" if val_loss is not None else ""))
               t.set_postfix(epoch=f"{epoch}/{n_epochs}",batch=f"{i}/{batches_per_gpu_epoch}", gpus=f"{c.max_gpus}", mem=f"{mem.percent:.2f}%")
               if c.run is not None:
                   c.run.log({"train_loss": avg_loss, "steps": step, "time": time.time() - start_time})
@@ -236,6 +246,7 @@ def _train(c: TrainRunConfig):
 
           if is_primary:
             t.update(1)
+            
 
       time_taken = time.time() - start_time
     
@@ -246,7 +257,7 @@ def _train(c: TrainRunConfig):
     if c.rank == 0:
         eval_and_save_model(c, ddp_model, device, os.path.join(checkpoint_dir, "final.pt"), criterion, val_dataloader)
         if c.run is not None:
-            c.run.log({"val_loss": val_loss_eval, "steps": step})
+            c.run.log({"val_loss": val_loss, "steps": step})
         logging.info(f'Model checkpoints saved to {checkpoint_dir}')
       
 

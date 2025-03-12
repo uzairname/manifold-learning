@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import io
 import wandb
 from wandb import wandb_run
 import torch
@@ -24,6 +25,7 @@ class TrainRunConfig:
   rank: int = None
   max_gpus: int = None
   distributed: bool = True
+  world_size: int = None
 
   # logging
   log_wandb: bool = True
@@ -94,26 +96,29 @@ def eval_and_save_model(
   Evaluate the model on the validation set and save the model
   """
   
+  temp = io.BytesIO()
+  torch.save(model.module.state_dict(), temp)
+  temp.seek(0)
+  state_dict = torch.load(temp)
+  model_copy = c.model_partial().to(device)
+  model_copy.load_state_dict(state_dict)
+  
   # Set model to evaluation mode
-  model.eval()
+  model_copy.eval()
   
   # Initialize variables for tracking loss and accuracy
   total_loss = 0.0
   correct = 0
   total = 0
-  
   # Disable gradient computation for evaluation
   with torch.no_grad():
     for batch in val_dataloader:
       inputs, targets = batch[0].to(device), batch[1].to(device)
-      
       # Forward pass
-      outputs = model(inputs)
-      
+      outputs = model_copy(inputs)
       # Compute loss
       loss = loss_fn(outputs, targets)
       total_loss += loss.item()
-      
       # Compute accuracy
       _, predicted = torch.max(outputs.data, 1)
       total += targets.size(0)
@@ -124,14 +129,14 @@ def eval_and_save_model(
   accuracy = correct / total
   
   if c.rank == 0:
-    logging.info(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
-    
     if c.save_method == "state_dict":
-      torch.save(model.state_dict(), path)
+      torch.save(model_copy.state_dict(), path)
     elif c.save_method == "trace":
       example_input = torch.randn(1, *INPUT_SHAPE).to(device)
-      traced_model = torch.jit.trace(model, example_input)
+      traced_model = torch.jit.trace(model_copy, example_input)
       traced_model.save(path)
     elif c.save_method == "script":
-      scripted_model = torch.jit.script(model)
+      scripted_model = torch.jit.script(model_copy)
       scripted_model.save(path)
+      
+  return avg_loss, accuracy

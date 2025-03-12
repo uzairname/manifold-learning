@@ -21,7 +21,6 @@ if __name__ == "__main__":
                 resnet_start_channels=resnet_start_channels,
                 fc_size=fc_size,
               ),
-              img_size=128,
               data_config=ClockConfig(),
               dataset_config=ClockDatasetConfig(
                 augment=dict(
@@ -29,13 +28,14 @@ if __name__ == "__main__":
                   blur=1
                 ),
                 data_size=data_size,
+                img_size=128,
               ),
               n_epochs=total_samples//data_size,
               batch_size=batch_size,
               latent_dim=2,
               learning_rate=1e-4,
               weight_decay=1e-4,
-              loss_fn=nn.SmoothL1Loss(),
+              loss_fn=nn.L1Loss(),
               n_checkpoints=16,
               save_path_suffix=f"",
             )

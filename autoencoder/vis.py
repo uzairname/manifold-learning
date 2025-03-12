@@ -64,7 +64,7 @@ def load_model_state_dict(
     with open(os.path.join(MODELS_DIR, name, model_dir, 'model_params.json'), 'r') as f:
       model_params = json.load(f).get('model_params', {})
   
-  model = model_class(img_size=img_size, latent_dim=latent_dim, **model_params).to(device)
+  model = model_class(**model_params).to(device)
   state_dict = torch.load(model_path, map_location=device)
   
   if 'model' in state_dict:
@@ -97,11 +97,12 @@ def print_model_parameters(cls: nn.Module, details=False):
     print(f"{'Total Trainable Parameters':<40}{total_params:>15,}")
 
 
-def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], model, dataloader, latent_dim=2):
+def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], model, dataloader, latent_dim=2, limit=None):
   """
   yields:
     - image, label1d, label2d, latent, reconstructed
   """
+  total_generated = 0
   with torch.no_grad():
     for noisy_imgs, clean_imgs, label2d, label1d in dataloader:
       noisy_imgs = noisy_imgs.to(device)
@@ -126,6 +127,9 @@ def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], mode
         latent = latents[i] if latents is not None else None
         reconstructed = reconstructeds[i] if reconstructeds is not None else None
         yield noisy_imgs[i], images[i], label1d[i], label2d[i], latent, reconstructed
+        total_generated += 1
+        if limit is not None and total_generated >= limit:
+          return
 
 
 
@@ -156,42 +160,6 @@ def map_inputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], datal
   
 
 
-
-def eval_model(
-  type_: typing.Literal['encoder', 'autoencoder', 'decoder'],
-  model: nn.Module,
-  val_data: typing.List,
-  device: str,
-  criterion: nn.Module=nn.MSELoss(),
-  latent_dim: int=2,
-):
-  
-  val_loss = 0
-  model.eval()
-  for i, batch in enumerate(val_data):
-      imgs, clean_imgs, labels2d, labels1d = batch
-      labels = labels1d.unsqueeze(1) if latent_dim == 1 else labels2d
-
-      if type_ == "encoder":
-          input = imgs.to(device)
-          output = labels.to(device)
-          
-      elif type_ == "decoder":
-          input = labels.to(device)
-          output = clean_imgs.to(device)
-      elif type_ == "autoencoder":
-          input = imgs.to(device)
-          output = clean_imgs.to(device)
-
-      with torch.no_grad():
-          pred = model(input)
-          loss = criterion(pred, output)
-          val_loss += loss.item()
-          
-          
-  val_loss /= len(val_data)
-
-  return val_loss
 
 
 
@@ -336,7 +304,9 @@ def visualize_latent(type_, model, latent_dim, dataloader):
   # Get a batch of model outputs
   latents = []
   labels1d = []
-  for _, _, label1d, _, latent, _ in get_outputs(type_, model, dataloader):
+  for i, (_, _, label1d, _, latent, _) in enumerate(get_outputs(type_, model, dataloader)):
+    if i >= 4000:
+      break
     latents.append(latent.unsqueeze(0).cpu())
     labels1d.append(label1d.unsqueeze(0).cpu())
 

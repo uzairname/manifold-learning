@@ -14,11 +14,10 @@ def optimizer(model: nn.Module):
   
   return torch.optim.AdamW(
     [
-      {"params": encoder_params, "lr": 1e-2, "weight_decay": 1e-2},
-      {"params": decoder_params, "lr": 1e-3, "weight_decay": 1e-3},
+      {"params": encoder_params, "lr": 1e-3, "weight_decay": 1e-2},
+      {"params": decoder_params, "lr": 1e-2, "weight_decay": 1e-3},
     ],
   )
-  
 
 if __name__ == "__main__":
   
@@ -29,35 +28,30 @@ if __name__ == "__main__":
     config = TrainRunConfig(
         model_class=cls,
         type="autoencoder",
-        loss_fn=nn.SmoothL1Loss(),
         latent_dim=2,
-        img_size=64,
         model_params=dict(
           encoder_args=dict(
-            fc_dims=[512, 256],
             n_conv_blocks=2,
-            channels=[1, 32, 64, 128],
+            channels=[1, 32, 64],
+            fc_dims=[256, 128],
           ),
           decoder_args=dict(
-            resnet_start_channels=384,
-            fc_size=1024,
+            fc_size=256,
+            resnet_start_channels=128,
           ),
         ),
-        data_config=ClockConfig(
-          hour_hand_width=0.1,
-          minute_hand_width=0.75,
-          minute_hand_start=1/3,
-        ),
+        data_config=ClockConfig(),
         dataset_config=ClockDatasetConfig(
-          data_size=2**14,
+          data_size=2**24,
+          img_size=64,
           augment=dict(
             noise_std=0.01,
-            # blur=1.0
-          )
+          ),
         ),
         batch_size=256,
         optimizer=optimizer,
-        n_checkpoints=32,
+        loss_fn=nn.SmoothL1Loss(),
+        n_checkpoints=16,
     )
   
     train_clock_model(config)

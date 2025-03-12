@@ -1,10 +1,10 @@
-from models.classifiers import MnistClassifier
+from models.classifiers import CNNClassifier
 from mnist1.trainer import train_mnist_model
 from mnist1.mnist import TrainRunConfig
 import torch
 
 if __name__ == "__main__":
-  cls = MnistClassifier
+  cls = CNNClassifier
   
   world_size = torch.cuda.device_count()
   
@@ -15,6 +15,8 @@ if __name__ == "__main__":
       batch_size=64,
       learning_rate=1e-4,
       weight_decay=1e-2,
+      n_checkpoints=16,
+      max_gpus=2
     )
   )
   
