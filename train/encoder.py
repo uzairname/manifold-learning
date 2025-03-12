@@ -9,8 +9,8 @@ if __name__ == "__main__":
 
   for cls in [ ConvMLPEncoder ]:
     for total_samples in [2**19]:
-      for learning_rate in [1e-2, 1e-4]:
-        for noise_std, blur in [[0.001, 0], [0.05, 2], [0.01, 4]]:
+      for learning_rate in [1e-4]:
+        for noise_std, blur in [[0.001, 0]]:
           data_size = total_samples
 
           config = TrainRunConfig(
@@ -34,9 +34,10 @@ if __name__ == "__main__":
               latent_dim=2,
               batch_size=256,
               n_epochs=total_samples//data_size,
-              learning_rate=1e-3,
+              learning_rate=learning_rate,
               weight_decay=1e-2,
               n_checkpoints=16,
+              group="test",
           )
       
           train_clock_model(config)

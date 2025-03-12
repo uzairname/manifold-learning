@@ -1,4 +1,4 @@
-from datasets.clock import IMG_SIZE, ClockConfig, ClockDatasetConfig
+from datasets.clock import ClockConfig, ClockDatasetConfig
 
 import torch.nn as nn
 import wandb.wandb_run
@@ -6,7 +6,9 @@ import torch
 import io
 
 import typing
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+import time
+import copy
 
 
 @dataclass
@@ -27,6 +29,7 @@ class TrainRunConfig:
   # logging
   log_wandb: bool = True
   run: wandb.wandb_run.Run | None = None
+  group: str = None
   name: str = None
   notes: str = None
   tags: list[str] = None
@@ -51,71 +54,85 @@ class TrainRunConfig:
   save_method: typing.Literal["state_dict", "trace", "script"] = "state_dict"
 
 
+def copy_model(trained_model: nn.Module, init_model: typing.Callable[[], nn.Module], device: str) -> nn.Module:
+    model_copy = init_model()
+    model_copy.load_state_dict(trained_model.state_dict())
+    return model_copy.to(device)
+  
+
+
 def eval_model(
-  type_: typing.Literal['encoder', 'autoencoder', 'decoder'],
-  model: nn.Module,
+  c: TrainRunConfig,
+  ddp_model: nn.Module,
   val_data: typing.List,
   device: str,
-  criterion: nn.Module,
-  latent_dim: int=2,
 ):
+  """
+  Evaluates a ddp model from a training run.
+  """
+  # model_ = copy_model(ddp_model.module, c.model_partial, device)
+
+  model_ = ddp_model.module
+
+  model_.eval()
+  
   val_loss = 0
-  model.eval()
-  for i, batch in enumerate(val_data):
-      _, clean_imgs, labels2d, labels1d = batch
-      labels = labels1d.unsqueeze(1) if latent_dim == 1 else labels2d
+  with torch.no_grad():
+    for i, batch in enumerate(val_data):
+        _, clean_imgs, labels2d, labels1d = batch
+        labels = labels1d.unsqueeze(1) if c.latent_dim == 1 else labels2d
 
-      if type_ == "encoder":
-          input = clean_imgs.to(device)
-          output = labels.to(device)
-      elif type_ == "decoder":
-          input = labels.to(device)
-          output = clean_imgs.to(device)
-      elif type_ == "autoencoder":
-          input = clean_imgs.to(device)
-          output = clean_imgs.to(device)
+        if c.type == "encoder":
+            input = clean_imgs.to(device)
+            output = labels.to(device)
+        elif c.type == "decoder":
+            input = labels.to(device)
+            output = clean_imgs.to(device)
+        elif c.type == "autoencoder":
+            input = clean_imgs.to(device)
+            output = clean_imgs.to(device)
 
-      with torch.no_grad():
-          pred = model(input)
-          loss = criterion(pred, output)
-          val_loss += loss.item()
+            pred = model_(input)
+            loss = c.loss_fn(pred, output)
+            val_loss += loss.item()
+
   val_loss /= len(val_data)
 
+  model_.train()
+  
   return val_loss
+
 
 
 def eval_and_save_model(
   c: TrainRunConfig,
-  model: nn.Module,
+  ddp_model: nn.Module,
   device: str,
   path: str,
-  criterion: nn.Module,
   val_data: typing.List,
 ):
+  """
+  Evaluates and saves a ddp model from a training run.
+  """
   # Unwrap from DDP and save the model using TorchScript trace
-  temp = io.BytesIO()
-  torch.save(model.module.state_dict(), temp)
-  temp.seek(0)
-  state_dict = torch.load(temp)
-  model_copy = c.model_partial().to(device)
-  model_copy.load_state_dict(state_dict)
+  # model_ = copy_model(ddp_model.module, c.model_partial, device)
 
+  model_ = ddp_model.module
+  model_.eval()
   # Trace and save the model
-  model_copy.eval()
   if c.save_method == "trace":
     dummy_input = torch.randn(1, c.latent_dim).to(device) if c.type == "decoder" else torch.randn(1, 1, c.dataset_config.img_size, c.dataset_config.img_size).to(device)
-    scripted_model = torch.jit.trace(model_copy, dummy_input)
+    scripted_model = torch.jit.trace(model_, dummy_input)
     torch.jit.save(scripted_model, path)
   elif c.save_method == "script":
-    scripted_model = torch.jit.script(model_copy)
+    scripted_model = torch.jit.script(model_)
     torch.jit.save(scripted_model, path)
   elif c.save_method == "state_dict":
-    scripted_model = model_copy
-    torch.save(scripted_model.state_dict(), path)
+    torch.save(model_.state_dict(), path)
   else:
     raise ValueError(f"Unknown save method {c.save_method}")
 
   # Evaluate the model test loss
-  val_loss_eval = eval_model(c.type, model_copy, val_data, device, criterion=criterion, latent_dim=c.latent_dim)
+  val_loss_eval = eval_model(c, ddp_model, val_data, device)
 
   return val_loss_eval

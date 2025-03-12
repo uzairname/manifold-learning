@@ -109,9 +109,8 @@ class ClockDatasetConfig:
   data_size: int=2**12
   img_size: int=128
   augment: dict=None
-  quantization_scheduler: typing.Callable[[int], int] = None
-  hand_width_scheduler: typing.Callable[[int], float] = None
-  initial_time: float= torch.sqrt( torch.tensor(2) ) - 1
+  # quantization_scheduler: typing.Callable[[int], int] = None
+  # hand_width_scheduler: typing.Callable[[int], float] = None
   noise_only: bool=False
 
 
@@ -162,11 +161,11 @@ class ClockDataset(Dataset):
       minute_label = minute / 60
 
       # Get quantization amount
-      quantization = self.config.quantization_scheduler(idx) if self.config.quantization_scheduler else None
-      hand_width = self.config.hand_width_scheduler(idx) if self.config.hand_width_scheduler else None
+      # quantization = self.config.quantization_scheduler(idx) if self.config.quantization_scheduler else None
+      # hand_width = self.config.hand_width_scheduler(idx) if self.config.hand_width_scheduler else None
       
       # Generate clock tensor
-      clock_tensor = self.generator.generate_clock_tensor(hour, minute, quantization, hand_width).to(self.config.device)
+      clock_tensor = self.generator.generate_clock_tensor(hour, minute, None, None).to(self.config.device)
 
       if self.config.augment is not None:
           # Set seed for deterministic augmentation
