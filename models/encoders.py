@@ -113,7 +113,6 @@ class ConvMLPEncoder(nn.Module):
     self.fc = nn.Sequential(
       *fc_layers,
       nn.Linear(fc_dims[-1], latent_dim),
-      nn.BatchNorm1d(latent_dim),
       nn.Sigmoid() if sigmoid else nn.Tanh(),
     )
   

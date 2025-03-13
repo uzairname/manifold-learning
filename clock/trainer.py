@@ -171,7 +171,7 @@ def _train(c: TrainRunConfig):
       "data-config": asdict(c.data_config) if c.data_config is not None else {},
       "dataset-config": asdict(c.dataset_config) if c.dataset_config is not None else {},
       "type": c.type,
-      "class": c.model_class.__name__,
+      "class": c.name,
       "n_params": sum(p.numel() for p in model.parameters()),
       "model_params": c.model_params,
       "learning-rate": c.learning_rate,
@@ -194,7 +194,7 @@ def _train(c: TrainRunConfig):
   checkpoint_num = 0
   running_loss = 0
   start_time = time.time()
-  with tqdm(total=total_steps, disable=(c.rank != 0)) as t:
+  with tqdm(total=total_steps, disable=(c.rank != 0), ncols=170) as t:
     for epoch in range(n_epochs):
       if c.distributed:
         train_sampler.set_epoch(epoch)
@@ -294,7 +294,7 @@ def _train(c: TrainRunConfig):
       if c.run is not None:
         c.run['summary/val_loss'] = val_loss
 
-      logging.info(f'Model checkpoints saved to {checkpoint_dir}')
+      logging.info(f'Model checkpoints saved to \033[92m{checkpoint_dir}\033[0m')
     
 
 """

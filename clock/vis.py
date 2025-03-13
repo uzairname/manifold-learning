@@ -38,9 +38,8 @@ def load_model_script(
     return model
 
 
-def print_model_parameters(cls: nn.Module, details=False):
+def print_model_parameters(model: nn.Module, details=False):
   
-    model = cls().to(device)
     model.eval()
 
     print(f"{'Layer':<40}{'Param Count':>15}")

@@ -254,7 +254,8 @@ class ActivationType(str, Enum):
     leakyrelu = 'leakyrelu'
     relu = 'relu'
     sigmoid = 'sigmoid'
-
+    sine = 'sine'
+    tanh = 'tanh'
 
 
 def str_to_activation(activation: str):
@@ -264,8 +265,13 @@ def str_to_activation(activation: str):
         return partial(nn.Sigmoid)
     elif activation == ActivationType.relu:
         return partial(nn.ReLU)
+    elif activation == ActivationType.sine:
+        return partial(nn.SiLU)
+    elif activation == ActivationType.tanh:
+        return partial(nn.Tanh)
     else:
         raise ValueError(f"Unknown activation type: {activation}")
+
 
 
 class ResNetDecoder3(nn.Module):
@@ -275,6 +281,7 @@ class ResNetDecoder3(nn.Module):
       img_size=128, 
       resnet_start_channels=256,
       fc_size=128,
+      dropout: bool = False,
     ):
         super().__init__()
 
@@ -293,9 +300,9 @@ class ResNetDecoder3(nn.Module):
 
         self.decoder_conv = nn.Sequential(
             ConvResidualDecoderBlock(resnet_start_channels, resnet_start_channels // 2, convt_strides=[1,2]), # -> 8x8
-            nn.Dropout(0.2),
+            nn.Dropout(0.2) if dropout else nn.Identity(),
             ConvResidualDecoderBlock(resnet_start_channels // 2, resnet_start_channels // 8, convt_strides=[2,2], dilation=2),  # -> 32x32
-            nn.Dropout(0.04),
+            nn.Dropout(0.04) if dropout else nn.Identity(),
             ConvResidualDecoderBlock(resnet_start_channels // 8, resnet_start_channels // 32, convt_strides=[2,2], dilation=2),  # -> 128x128
             nn.Conv2d(resnet_start_channels // 32, 1, kernel_size=3, stride=1, padding=1), # -> 128x128
             nn.Sigmoid()
@@ -308,3 +315,112 @@ class ResNetDecoder3(nn.Module):
         if torch.isnan(x).any(): print("NaN in decoder conv output")
         return x
 
+
+
+
+class ImplicitNeuralDecoder(nn.Module):
+  def __init__(
+    self, 
+    latent_dim=2, 
+    img_size=128, 
+    fc_dims=[128], 
+    pe_dim=10, 
+    activation=ActivationType.relu,
+    use_film=True,
+):
+    super().__init__()
+    self.img_size = img_size
+    self.pe_dim = pe_dim
+    self.use_film = use_film
+
+    # (x, y) coordinates
+    input_dim = 2  
+
+    # Positional encoding expands input dimensions. *4 for sin/cos for x/y
+    input_dim += 4 * pe_dim  
+    
+    # Define FiLM conditioning network
+    
+    if use_film:
+      # If FiLM is used, no need to use use context in the input
+      self.input_dim = input_dim
+      self.film_generator = nn.Sequential(
+        nn.Linear(latent_dim, 64),
+        nn.ReLU(),
+        nn.Linear(64, 2 * sum(fc_dims))  # Generates (γ, β) for each layer
+      )
+    else:
+      self.input_dim = input_dim + latent_dim
+
+
+    self.fc = nn.ModuleList()
+    for i in range(len(fc_dims)):
+      self.fc.append(nn.Linear(self.input_dim if i == 0 else fc_dims[i-1], fc_dims[i]))
+      self.fc.append(nn.BatchNorm1d(fc_dims[i]))
+      self.fc.append(str_to_activation(activation)())
+    
+    self.output_fc = nn.Sequential(
+      nn.Linear(fc_dims[-1], 1),  # Output layer
+      nn.Sigmoid() # Sigmoid activation for pixel values
+    )
+
+    # Precompute coordinates and their positional encodings
+    self.register_buffer("coords", self._generate_coords())
+    self.register_buffer("coords_pe", self._compute_positional_encoding(self.coords))
+
+
+  def _generate_coords(self):
+    x = torch.linspace(0, 1, self.img_size)
+    y = torch.linspace(0, 1, self.img_size)
+    x, y = torch.meshgrid(x, y, indexing="ij")
+    coords = torch.stack([x.flatten(), y.flatten()], dim=-1)  # (img_size^2, 2)
+    return coords
+
+  def _compute_positional_encoding(self, coords):
+    pe = []
+    if self.pe_dim == 0:
+      return torch.zeros(coords.shape[0], 0, device=coords.device)
+    for i in range(self.pe_dim):
+      pe.append(torch.sin((2.0 ** i) * np.pi * coords))
+      pe.append(torch.cos((2.0 ** i) * np.pi * coords))
+    return torch.cat(pe, dim=-1)  # (n*n, 2*pe_dim)
+
+  def forward(self, context):
+    batch_size = context.shape[0] if context.dim() > 1 else 1
+    coords = self.coords  # (img_size^2, 2)
+
+    # Expand context for each coordinate
+    context = context.unsqueeze(1).expand(-1, coords.shape[0], -1)  # (batch, img_size^2, context_dim)
+    coords = coords.unsqueeze(0).expand(batch_size, -1, -1)  # (batch, img_size^2, 2)
+    coords = torch.cat([coords, self.coords_pe.unsqueeze(0).expand(batch_size, -1, -1)], dim=-1)
+
+    # Flatten for input to MLP
+    coords = coords.reshape(-1, coords.shape[-1])
+    context = context.reshape(-1, context.shape[-1])
+    
+    if self.use_film:
+      # if FiLM is used, no need to use context in the input
+      x = coords
+    else:
+      # Concatenate coordinates and context
+      x = torch.cat([coords, context], dim=-1)
+      print(x.shape)
+    
+    if self.use_film:
+      film_params = self.film_generator(context[:, :context.shape[-1]])  # (batch*n*n, 2 * sum(fc_dims))
+      gamma, beta = torch.split(film_params, film_params.shape[-1] // 2, dim=-1)
+
+    split_idx = 0
+    for layer in self.fc:
+      x = layer(x)
+      
+      # Apply FiLM parameters
+      if isinstance(layer, nn.Linear) and self.use_film:
+        gamma_layer = gamma[:, split_idx:split_idx + layer.out_features]
+        beta_layer = beta[:, split_idx:split_idx + layer.out_features]
+        x = gamma_layer * x + beta_layer
+        split_idx += layer.out_features
+          
+    output = self.output_fc(x)  # (batch * n*n, out_channels)
+
+    return output.view(batch_size, 1, self.img_size, self.img_size)  # (batch, 1, img_size, img_size)
