@@ -15,11 +15,11 @@ IMG_SIZE = 128
 
 @dataclass
 class ClockConfig:
-    minute_hand_len: int = 1
     minute_hand_start: float = 0.5
+    minute_hand_end: int = 1
     minute_hand_width: float = 0.1
-    hour_hand_len: int = 0.5
     hour_hand_start: float = 0
+    hour_hand_end: int = 0.5
     hour_hand_width: float = 0.1
     angle_quantization: int = None
 
@@ -55,6 +55,7 @@ class ClockGenerator:
       self, 
       hour: torch.Tensor, 
       minute: torch.Tensor,
+      invert: bool=False,
       quantization=None,
       hand_width=None,
     ):
@@ -94,12 +95,14 @@ class ClockGenerator:
         minute_hand_width = hand_width or self.config.minute_hand_width
 
         # Generate hands with correct length
-        hour_hand = draw_hand(hour_angle, start=self.config.hour_hand_start, length=self.config.hour_hand_len, width=hour_hand_width)
-        minute_hand = draw_hand(minute_angle, start=self.config.minute_hand_start, length=self.config.minute_hand_len, width=minute_hand_width)
+        hour_hand = draw_hand(hour_angle, start=self.config.hour_hand_start, length=self.config.hour_hand_end, width=hour_hand_width)
+        minute_hand = draw_hand(minute_angle, start=self.config.minute_hand_start, length=self.config.minute_hand_end, width=minute_hand_width)
 
         # Combine clock face and hands
         clock_tensor = self.outside_clock + self.clock_face - (hour_hand + minute_hand)
         clock_tensor = torch.clamp(clock_tensor, 0, 1)  # Ensure values in [0,1]
+        if invert:
+            clock_tensor = 1 - clock_tensor
         return clock_tensor.unsqueeze(0)  # Add channel dimension (1, H, W)
 
 
@@ -112,6 +115,8 @@ class ClockDatasetConfig:
   # quantization_scheduler: typing.Callable[[int], int] = None
   # hand_width_scheduler: typing.Callable[[int], float] = None
   noise_only: bool=False
+  invert_prob: float=0
+  test: bool=False  
 
 
 class ClockDataset(Dataset):
@@ -133,6 +138,11 @@ class ClockDataset(Dataset):
         if self.config.augment is not None:
             self.noise_std = self.config.augment.get('noise_std', 0.0)
             self.blur = self.config.augment.get('blur', 0.0)
+            
+        self.seed_offset = {
+            False: 0,
+            True: 0xA5A5A5A5,  # Arbitrary large offset
+        }[self.config.test]
 
         self.generator = ClockGenerator(img_size=self.config.img_size, device=self.config.device, config=clock_config)
 
@@ -146,10 +156,18 @@ class ClockDataset(Dataset):
       if self.config.noise_only:
           return torch.randn((1, self.config.img_size, self.config.img_size)), torch.randn((1, self.config.img_size, self.config.img_size)), torch.randn(2), torch.randn(1)
       
-      # Get time of day as a fraction of 1
-      hashed = (idx * 2654435761) & 0xFFFFFFFF
+      hashed = ((idx * 2654435761) + self.seed_offset) & 0xFFFFFFFF
+      np.random.seed(hashed)
+      torch.manual_seed(hashed)
+      random.seed(hashed)
+      # time of day is a float32 tensor chosen uniformly in [0, 1)
+      # time_of_day = torch.rand(1, device=self.config.device).item() # in [0, 1)
       time_of_day = torch.tensor((hashed / 0xFFFFFFFF), dtype=torch.float32)  # in [0, 1)
+      # invert is a boolean chosen with probability self.config.invert_prob
+      invert = np.random.rand() < self.config.invert_prob
+    
       
+
       # Convert to hour and minute
       total_minutes = time_of_day * 12 * 60 # in [0, 12*60)
       hour = torch.floor(total_minutes / 60) # in [0, 12)
@@ -160,18 +178,10 @@ class ClockDataset(Dataset):
       hour_label = hour / 12
       minute_label = minute / 60
 
-      # Get quantization amount
-      # quantization = self.config.quantization_scheduler(idx) if self.config.quantization_scheduler else None
-      # hand_width = self.config.hand_width_scheduler(idx) if self.config.hand_width_scheduler else None
-      
       # Generate clock tensor
-      clock_tensor = self.generator.generate_clock_tensor(hour, minute, None, None).to(self.config.device)
+      clock_tensor = self.generator.generate_clock_tensor(hour, minute, invert=invert).to(self.config.device)
 
       if self.config.augment is not None:
-          # Set seed for deterministic augmentation
-          random.seed(idx)
-          np.random.seed(idx)
-          torch.manual_seed(idx)
 
           # Add Gaussian noise
           noisy_clock_tensor = clock_tensor + torch.randn_like(clock_tensor) * self.noise_std/2
@@ -209,12 +219,16 @@ def get_dataloaders(
   Get the clock dataset split into training and validation sets.
   """
   # Dataset
-  dataset = ClockDataset(dataset_config=dataset_config, clock_config=data_config)
+  train_dataset = ClockDataset(dataset_config=dataset_config, clock_config=data_config)
+  
+  test_dataset_config = ClockDatasetConfig(
+      img_size=dataset_config.img_size,
+      test=True,
+      data_size=4096,
+  )
+  test_dataset = ClockDataset(dataset_config=test_dataset_config, clock_config=data_config)
 
   # Split into train and val
-  if val_size is None:
-      val_size = np.min((dataset_config.data_size//8, 2**12))
-  train_dataset, val_dataset = torch.utils.data.random_split(dataset, [len(dataset) - val_size, val_size])
 
   # Get sampler and dataloader for train data
   if rank is not None:
@@ -229,8 +243,8 @@ def get_dataloaders(
   # increase num_workers if GPU is underutilized
 
   # Get sampler and dataloader for val data
-  val_sampler = torch.utils.data.SequentialSampler(val_dataset)  # No need for shuffling
-  val_dataloader = DataLoader(val_dataset, batch_size=batch_size, sampler=val_sampler, pin_memory=True, drop_last=True, num_workers=4, persistent_workers=True)
+  val_sampler = torch.utils.data.SequentialSampler(test_dataset)  # No need for shuffling
+  val_dataloader = DataLoader(test_dataset, batch_size=batch_size, sampler=val_sampler, pin_memory=True, drop_last=True, num_workers=4, persistent_workers=True)
 
   assert len(train_dataloader) > 0, f"Train dataloader is empty (batch_size={batch_size}, dataset size={len(train_dataset)}, world_size={world_size})"
   assert val_size == 0 or len(val_dataloader) > 0, "Validation dataloader is empty"

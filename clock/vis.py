@@ -1,9 +1,10 @@
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 import matplotlib.pyplot as plt
 import os
 
 from tqdm import tqdm
+from clock.utils import ModelCheckpoint
 from utils.config import MODELS_DIR
 import typing
 from torch import nn
@@ -57,79 +58,58 @@ def print_model_parameters(model: nn.Module, details=False):
     print(f"{'Total Trainable Parameters':<40}{total_params:>15,}")
 
 
-def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], model, dataloader, latent_dim=2, limit=None):
+def get_outputs(cp: ModelCheckpoint, limit=None):
   """
   yields:
     - image, label1d, label2d, latent, reconstructed
   """
-  total_generated = 0
   with torch.no_grad():
-    for noisy_imgs, clean_imgs, label2d, label1d in dataloader:
+    for noisy_img, img, label1d, label2d, out in map_inputs(cp, cp.model.forward, limit=limit):
+      latent = out if cp.type != 'decoder' else None
+      reconstructed = out if cp.type != 'encoder' else None
+      yield noisy_img, img, label1d, label2d, latent, reconstructed
+
+
+
+def map_inputs(cp: ModelCheckpoint, forward_fn: typing.Callable, limit=None):
+  """
+  Given a forward function that takes an input according to the type and returns an output of batches,
+  this function maps the inputs to the outputs.
+  """
+  with torch.no_grad():
+    for i, (noisy_imgs, clean_imgs, label2d, label1d) in enumerate(cp.dataloader):
+      if limit is not None and i >= limit:
+        break
       noisy_imgs = noisy_imgs.to(device)
       images = clean_imgs.to(device)
       label1d = label1d.to(device)
       label2d = label2d.to(device)
       
-      latents = None
-      reconstructeds = None
-      if type_ == 'encoder':
-        latents = model.forward(images)
-      
-      if type_ == 'autoencoder':
-        latents = model.encoder(images)
-        reconstructeds = model.forward(images)
-
-      elif type_ == 'decoder':
-        reconstructeds = model.forward(label1d.unsqueeze(1) if latent_dim == 1 else label2d)
-      
-      
-      for i in range(images.size(0)):
-        latent = latents[i] if latents is not None else None
-        reconstructed = reconstructeds[i] if reconstructeds is not None else None
-        yield noisy_imgs[i], images[i], label1d[i], label2d[i], latent, reconstructed
-        total_generated += 1
-        if limit is not None and total_generated >= limit:
-          return
-
-
-
-def map_inputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], dataloader, forward_fn, latent_dim=2):
-  """
-  Given a forward function that takes an input according to the type and returns an output of batches,
-  this function maps the inputs to the outputs.
-  """
-  
-  with torch.no_grad():
-    for _, clean_imgs, label2d, label1d in dataloader:
-      images = clean_imgs.to(device)
-      label1d = label1d.to(device)
-      label2d = label2d.to(device)
-      
       outs = None
-      if type_ == 'encoder':
+      if cp.type == 'encoder':
         outs = forward_fn(images)
       
-      elif type_ == 'autoencoder':
+      elif cp.type == 'autoencoder':
         outs = forward_fn(images)
 
-      elif type_ == 'decoder':
-        outs = forward_fn(label1d.unsqueeze(1) if latent_dim == 1 else label2d)
+      elif cp.type == 'decoder':
+        outs = forward_fn(label1d.unsqueeze(1) if cp.latent_dim == 1 else label2d)
         
       for i in range(images.size(0)):
-        yield images[i], label1d[i], label2d[i], outs[i]
+        yield noisy_imgs[i], images[i], label1d[i], label2d[i], outs[i]
   
 
 
 
 
 
-def show_data(dataloader: DataLoader, device=device):
+def show_data(dataset: Dataset, device=device):
   
   # visualize 16 images
   fig, axs = plt.subplots(8, 8, figsize=(10, 12))
   # fig.tight_layout()
   # imgs, clean_imgs, labels2d, label1d = next(iter(dataloader.dataset))
-  for i, (imgs, clean_imgs, labels2d, label1d) in enumerate(iter(dataloader.dataset)):
+  for i, (imgs, clean_imgs, labels2d, label1d) in enumerate(iter(dataset)):
       if i >= 64:
         break
       # print(labels2d)
@@ -140,7 +120,7 @@ def show_data(dataloader: DataLoader, device=device):
 
       hour = label2d_unnormalized[0]
       minute = label2d_unnormalized[1]
-
+      
       axs[i // 8, i % 8].imshow(img.squeeze().cpu(), cmap='gray')
       axs[i // 8, i % 8].set_title(f"{hour:.0f}h{minute:.0f}m")
       axs[i // 8, i % 8].axis('off')
@@ -148,8 +128,8 @@ def show_data(dataloader: DataLoader, device=device):
   plt.show()
   
 
-def visualize_reconstruction(type_, model, dataloader, latent_dim=2):
-  if type_ == 'encoder':
+def visualize_reconstruction(cp: ModelCheckpoint):
+  if cp.type == 'encoder':
     print("Encoder")
     return
 
@@ -157,12 +137,12 @@ def visualize_reconstruction(type_, model, dataloader, latent_dim=2):
   s=2
   fig, axs = plt.subplots(n, 6, figsize=(6*s, n*s))
   
-  if type_ == 'decoder':
+  if cp.type == 'decoder':
     fig.suptitle('Decoder Reconstructions')
-  elif type_ == 'autoencoder':
+  elif cp.type == 'autoencoder':
     fig.suptitle('Autoencoder Reconstructions')
 
-  for i, (noisy_img, img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader, latent_dim=latent_dim)):
+  for i, (noisy_img, img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(cp)):
     if i >= 2*n:
       break
     
@@ -203,13 +183,10 @@ def visualize_reconstruction(type_, model, dataloader, latent_dim=2):
 
 
 def visualize_predictions(
-  type_,
-  model, 
-  dataloader, 
+  cp: ModelCheckpoint,
   criterion=nn.MSELoss(),
-  latent_dim=2
 ):
-  if type_ != 'encoder':
+  if cp.type != 'encoder':
     print("Not encoder")
     return
   
@@ -218,11 +195,11 @@ def visualize_predictions(
   fig, axs = plt.subplots(n, n, figsize=(n*s, 1.3*n*s))
   fig.suptitle('Encoder Predictions')
     
-  for i, (_, img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(type_, model, dataloader)):
+  for i, (_, img, label1d, label2d, latent, reconstructed) in enumerate(get_outputs(cp)):
     if i >= n**2:
       break
     
-    if latent_dim == 1:
+    if cp.latent_dim == 1:
       # Latents are in minutes past midnight. Multiply by 12*60 to unnormalize
       unnormalized_latent = (latent * torch.tensor(12*60).to(device).float()).cpu()
       unnormalized_label1d = (label1d * torch.tensor(12*60).to(device).float()).cpu()
@@ -255,16 +232,16 @@ def visualize_predictions(
     
     
 
-def visualize_latent(type_, model, latent_dim, dataloader):
+def visualize_latent(cp: ModelCheckpoint):
   
-  if type_ == 'decoder':
+  if cp.type == 'decoder':
     print("Decoder")
     return
   
   # Get a batch of model outputs
   latents = []
   labels1d = []
-  for i, (_, _, label1d, _, latent, _) in enumerate(get_outputs(type_, model, dataloader)):
+  for i, (_, _, label1d, _, latent, _) in enumerate(get_outputs(cp)):
     if i >= 4000:
       break
     latents.append(latent.unsqueeze(0).cpu())
@@ -277,12 +254,12 @@ def visualize_latent(type_, model, latent_dim, dataloader):
   print("plotting")
   
   
-  if (latent_dim <= 2):
+  if (cp.latent_dim <= 2):
     # Plot latent space
     plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(labels1d if latent_dim==1 else latents[:,1], latents[:,0], c=labels1d, cmap="viridis", alpha=0.7)
+    scatter = plt.scatter(labels1d if cp.latent_dim==1 else latents[:,1], latents[:,0], c=labels1d, cmap="viridis", alpha=0.7,s=1)
     plt.colorbar(scatter, label="Time in minutes past midnight")
-    plt.xlabel("Time in minutes past midnight" if latent_dim==1 else "Latent Dimension 2")
+    plt.xlabel("Time in minutes past midnight" if cp.latent_dim==1 else "Latent Dimension 2")
     plt.ylabel("Latent Dimension 1")
     plt.title("Output of encoder")
     plt.show()
@@ -293,7 +270,7 @@ def visualize_latent(type_, model, latent_dim, dataloader):
 
     # Plot PCA-reduced latent space
     plt.figure(figsize=(8, 6))
-    scatter = plt.scatter(latents_2d[:, 0], latents_2d[:, 1], c=labels1d, cmap="viridis", alpha=0.7)
+    scatter = plt.scatter(latents_2d[:, 0], latents_2d[:, 1], c=labels1d, cmap="viridis", alpha=0.7, s=1)
     plt.colorbar(scatter, label="Time in minutes past midnight")
     plt.xlabel("PCA Component 1")
     plt.ylabel("PCA Component 2")

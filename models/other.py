@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from models.decoders import ActivationType, str_to_activation
 from models.encoders import ConvResidualEncoderBlock
 
 
@@ -30,7 +31,6 @@ class CNNClassifier(nn.Module):
         return x
       
       
-      
 class MLPClassifier(nn.Module):
     def __init__(self, input_dim=784, n_classes=10, hidden_dim=512):
         super(MLPClassifier, self).__init__()
@@ -44,3 +44,22 @@ class MLPClassifier(nn.Module):
         
     def forward(self, x):
         return self.fc(x)
+      
+
+      
+class MLP(nn.Module):
+  def __init__(self, dims=[1,1], activation: ActivationType='tanh'):
+    super().__init__()
+    self.fc = nn.Sequential()
+    for i in range(len(dims)-1):
+      is_last = i == len(dims)-2
+      self.fc.extend([
+        nn.Linear(dims[i], dims[i+1]),
+        nn.BatchNorm1d(dims[i+1]),
+        nn.Tanh() if not is_last else str_to_activation(activation)(),
+      ])
+      
+  def forward(self, x):
+    x = self.fc(x)
+    return x
+  

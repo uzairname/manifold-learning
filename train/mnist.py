@@ -1,4 +1,4 @@
-from models.classifiers import CNNClassifier
+from models.other import CNNClassifier
 from mnist1.trainer import train_mnist_model
 from mnist1.mnist import TrainRunConfig
 import torch

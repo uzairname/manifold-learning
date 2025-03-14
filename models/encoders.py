@@ -53,6 +53,47 @@ class ConvResidualEncoderBlock(nn.Module):
 
 
 
+class ConvResidualEncoderBlock2(nn.Module):
+    def __init__(self, in_channels, out_channels, dilation_rate=1):
+        super().__init__()
+
+        # First downsampling block using strided convolution
+        self.downsample1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1),  # 128x128 -> 64x64
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.1),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation_rate, dilation=dilation_rate),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.1)
+        )
+
+        # Second downsampling block using strided convolution
+        self.downsample2 = nn.Sequential(
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=2, padding=1),  # 64x64 -> 32x32
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.1),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=dilation_rate, dilation=dilation_rate),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.1)
+        )
+
+        # Skip connection using 1x1 conv and strided conv to match spatial dimensions
+        self.skip = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1),
+            nn.BatchNorm2d(out_channels),
+            nn.LeakyReLU(0.1),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=4, padding=1)  # 128x128 -> 32x32
+        )
+
+    def forward(self, x):
+        identity = self.skip(x)  # Skip connection
+        x = self.downsample1(x)
+        x = self.downsample2(x)
+        x += identity  # Add skip connection
+        return x
+
+
+
 class MLPEncoder(nn.Module):
   def __init__(self, latent_dim=2, img_size=128):
     super(MLPEncoder, self).__init__()
@@ -81,47 +122,45 @@ class ConvMLPEncoder(nn.Module):
     latent_dim=2, 
     img_size=128, 
     fc_dims=[128],
-    sigmoid=False,
-    n_conv_blocks=3,
-    channels=[1, 16, 32, 64]
+    supervised=False,
+    channels=[16, 32, 64]
   ):
     super(ConvMLPEncoder, self).__init__()
     
-    conv_blocks = []
-    
-    for i in range(n_conv_blocks):
-      conv_blocks.append(
-        ConvResidualEncoderBlock(channels[i], channels[i+1], 2)
-      )
+    self.supervised = supervised
       
-    self.conv = nn.Sequential(*conv_blocks, nn.Flatten())
+    self.conv = nn.Sequential()
+    for i in range(len(channels)):
+      in_channels = 1 if i == 0 else channels[i-1]
+      self.conv.append(
+        ConvResidualEncoderBlock2(in_channels, channels[i], dilation_rate=i+1)
+      )
+    self.conv.append(nn.Flatten())
     
-    dummy_input = torch.randn(1, 1, img_size, img_size)
-    dummy_input = self.conv(dummy_input)
-    self.dim_after_flatten = dummy_input.shape[-1]
+    dim_after_flatten = self.conv(torch.randn(1, 1, img_size, img_size)).shape[-1]
     
-    fc_layers = []
-    
+    self.fc = nn.Sequential()
     for i in range(len(fc_dims)):
-      in_dim = self.dim_after_flatten if i == 0 else fc_dims[i-1]
-      fc_layers.extend([
+      in_dim = dim_after_flatten if i == 0 else fc_dims[i-1]
+      self.fc.extend([
         nn.Linear(in_dim, fc_dims[i]),
         nn.BatchNorm1d(fc_dims[i]),
         nn.Tanh(),
       ])
       
-    self.fc = nn.Sequential(
-      *fc_layers,
+    self.last_layer = nn.Sequential(
       nn.Linear(fc_dims[-1], latent_dim),
-      nn.Sigmoid() if sigmoid else nn.Tanh(),
+      nn.Sigmoid() if supervised else nn.Tanh(),
     )
-  
-  
+
+
   def forward(self, x):
     x = self.conv(x)
     x = self.fc(x)
+    x = self.last_layer(x)
+    if self.supervised:
+      # expand range to include 0 and 1 better
+      x = x * 1.1 - 0.05
     return x
 
 
-
-  

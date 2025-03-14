@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 from mnist1.mnist import TrainRunConfig, eval_and_save_model, get_mnist_dataloaders
 from utils.logging import setup_logging
-from utils.train_utils import log_gradient_norms
+from utils.train_utils import log_norms
 from utils.utils import mkdir_empty
 from utils.multiprocessing_utils import process_group_cleanup, process_group_setup
 
@@ -220,7 +220,7 @@ def _train(c: TrainRunConfig):
 
           if is_primary and (step % 16 == 0):
             # log gradients
-            log_gradient_norms(c.run, ddp_model, time=time.time() - start_time)
+            log_norms(c.run, ddp_model, time=time.time() - start_time)
             # log input image
             
           if use_mp:

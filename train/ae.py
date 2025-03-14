@@ -1,5 +1,5 @@
 from datasets.clock import ClockConfig, ClockDatasetConfig
-from models.autoencoders import MLPResnetAutoencoder
+from models.autoencoders import ConvINRAutoencoder, MLPResnetAutoencoder
 from clock.utils import TrainRunConfig
 from clock import train_clock_model
 import torch
@@ -14,8 +14,8 @@ def optimizer(model: nn.Module):
   
   return torch.optim.AdamW(
     [
-      {"params": encoder_params, "lr": 1e-3, "weight_decay": 1e-2},
-      {"params": decoder_params, "lr": 5e-3, "weight_decay": 1e-3},
+      {"params": encoder_params, "lr": 0.0001, "weight_decay": 1e-2},
+      {"params": decoder_params, "lr": 0.001, "weight_decay": 1e-4},
     ],
   )
 
@@ -24,35 +24,37 @@ if __name__ == "__main__":
   world_size = torch.cuda.device_count()
 
   for cls in [ MLPResnetAutoencoder ]:
-    
-    config = TrainRunConfig(
-        experiment_group="A",
-        model_class=cls,
-        type="autoencoder",
-        latent_dim=2,
-        model_params=dict(
-          encoder_args=dict(
-            n_conv_blocks=2,
-            channels=[1, 64, 128],
-            fc_dims=[512, 256],
+    for total_samples in [2**22]:
+      
+      # finite data
+      data_size=total_samples
+
+      config = TrainRunConfig(
+          model_class=cls,
+          label="b",
+          type="autoencoder",
+          model_params=dict(
+            latent_dim=2,
+            encoder_args=dict(
+              channels=[64, 64],
+              fc_dims=[128, 64],
+            ),
+            decoder_args=dict(
+              fc_size=64,
+              resnet_start_channels=512,
+            ),
           ),
-          decoder_args=dict(
-            fc_size=1024,
-            resnet_start_channels=256,
+          data_config=ClockConfig(),
+          dataset_config=ClockDatasetConfig(
+            data_size=data_size,
+            img_size=64,
           ),
-        ),
-        data_config=ClockConfig(),
-        dataset_config=ClockDatasetConfig(
-          data_size=2**22,
-          img_size=64,
-          augment=dict(
-            noise_std=0.01,
-          ),
-        ),
-        batch_size=256,
-        optimizer=optimizer,
-        loss_fn=nn.SmoothL1Loss(),
-        n_checkpoints=16,
-    )
+          n_epochs=total_samples//data_size,
+          batch_size=512,
+          optimizer=optimizer,
+          loss_fn=nn.SmoothL1Loss(),
+          n_checkpoints=16,
+          max_gpus=4,
+      )
   
     train_clock_model(config)
