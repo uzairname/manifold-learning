@@ -76,10 +76,9 @@ def map_inputs(cp: ModelCheckpoint, forward_fn: typing.Callable, limit=None):
   Given a forward function that takes an input according to the type and returns an output of batches,
   this function maps the inputs to the outputs.
   """
+  count = 0
   with torch.no_grad():
-    for i, (noisy_imgs, clean_imgs, label2d, label1d) in enumerate(cp.dataloader):
-      if limit is not None and i >= limit:
-        break
+    for noisy_imgs, clean_imgs, label2d, label1d in cp.dataloader:
       noisy_imgs = noisy_imgs.to(device)
       images = clean_imgs.to(device)
       label1d = label1d.to(device)
@@ -97,6 +96,10 @@ def map_inputs(cp: ModelCheckpoint, forward_fn: typing.Callable, limit=None):
         
       for i in range(images.size(0)):
         yield noisy_imgs[i], images[i], label1d[i], label2d[i], outs[i]
+
+        count += 1
+        if limit is not None and count >= limit:
+          return
   
 
 

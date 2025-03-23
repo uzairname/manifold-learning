@@ -5,7 +5,6 @@ from models.encoders import ConvMLPEncoder, MLPEncoder
 from models.other import MLP
 
 
-
 class MLPResnetAutoencoder(nn.Module):
 
     def __init__(self, latent_dim=2, img_size=128, encoder_args:dict=None, decoder_args: dict=None):

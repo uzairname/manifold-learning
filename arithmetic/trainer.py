@@ -1,3 +1,8 @@
+import json
+import logging
+import os
+import time
+import psutil
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -5,65 +10,61 @@ import torch.multiprocessing as mp
 import torch.optim as optim
 
 import numpy as np
-
-import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import functools
-
-import os
-from datasets.clock import get_dataloaders
-import psutil
-import time
-import logging
-from tqdm import tqdm
-
-from utils.config import MODELS_DIR
-from clock.utils import TrainRunConfig, eval_and_save_model, eval_model
-from utils.logging import setup_logging
-from utils.train_utils import log_norms
-from utils.utils import mkdir_empty
-from utils.multiprocessing_utils import process_group_cleanup, process_group_setup
 
 import neptune
 from neptune.utils import stringify_unsupported
+from tqdm import tqdm
 
-DATASET_NAME = "clock"
+from utils.config import MODELS_DIR
+from utils.multiprocessing_utils import process_group_cleanup, process_group_setup
+from utils.train_utils import BaseTrainRunConfig, setup_logging
+from arithmetic.dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
+from utils.utils import mkdir_empty
 
-def train_clock_model(c: TrainRunConfig):
 
-    c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
-    c.distributed = c.world_size > 1
+@dataclass
+class TrainRunConfig(BaseTrainRunConfig):
+  data_config: ArithmeticDatasetConfig = ArithmeticDatasetConfig()
+  val_frac=0.0
+
+
+def train_arithmetic_model(c: TrainRunConfig):
+  
+  # Determine the world size
+  c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
+  c.distributed = c.world_size > 1
+  
+  # Set model partial and name
+  c.model_partial = functools.partial(c.model_class, **(c.model_params or {}))
+  
+  if c.name is None:
+    c.name = c.model_class.__name__
     
-    if c.dataset_config.img_size is not None:
-      c.model_params['img_size'] = c.dataset_config.img_size
-    
-    c.model_partial = functools.partial(c.model_class, **(c.model_params or {}))
-    
-    if c.name is None:
-      c.name = c.model_class.__name__
-      
-    print(f"Training model {c.name} with {c.world_size} GPUs")
+  print(f"Training model {c.name} with {c.world_size} GPUs")
 
-    torch.cuda.empty_cache()
+  torch.cuda.empty_cache()
 
-    if c.distributed:
-      mp.spawn(
-        train_process,
-        args=(c,),
-        nprocs=c.world_size,
-        join=True,
-      )
-    else:
-      # 1 or 0 gpus
-      setup_logging()
-      c.rank = None
-      _train(c)
-    
-    if c.run is not None:
-      c.run.stop()
-    print('Done training')
-
-
+  if c.distributed:
+    mp.spawn(
+      train_process,
+      args=(c,),
+      nprocs=c.world_size,
+      join=True,
+    )
+  else:
+    # 1 or 0 gpus
+    setup_logging()
+    c.rank = None
+    _train(c)
+  
+  if c.run is not None:
+    c.run.stop()
+  print('Done training')
+  
+  
+  
 def train_process(rank, c: TrainRunConfig):
   try:
     c.rank = rank
@@ -77,9 +78,7 @@ def train_process(rank, c: TrainRunConfig):
     
     if c.run is not None:
       c.run.stop()
-  
-
-
+      
 def _train(c: TrainRunConfig):
   
   is_primary = c.rank == 0 or not c.distributed
@@ -94,42 +93,20 @@ def _train(c: TrainRunConfig):
   torch.autograd.set_detect_anomaly(True)
 
   # Get dataloaders
-  train_dataloader, val_dataloader, train_sampler, _ = get_dataloaders(
+  train_dataloader, val_dataloader, train_sampler, _ = get_mod_arithmetic_cp_dataloaders(
       data_config=c.data_config,
-      dataset_config=c.dataset_config,
-      val_size=c.val_size,
+      val_frac=c.val_frac,
       batch_size=c.batch_size,
       world_size=c.world_size,
       rank=c.rank,
-      use_workers=True
   )
   
-  # Create validation. Shape (N, B, C, H, W)
-  if is_primary:
-      val_data = [batch for batch in val_dataloader]
-  else:
-      val_data = None
-
-  n_epochs = c.n_epochs
-  
-  # Total number of batches this gpu will see
-  total_steps = len(train_dataloader) * n_epochs
-  
-  # Number of total samples seen by the model (train_samples * n_epochs) is 2^log_total_train_samples
-  log_total_train_samples = np.round(np.log2(len(train_dataloader.dataset) * n_epochs)).astype(int)
-  
-  batches_per_gpu_epoch = len(train_dataloader)
-  
-  # Checkpoint every n optimization steps/batches
-  # checkpoint_frequency = np.max((total_steps // c.n_checkpoints, 1)) if c.n_checkpoints is not None else None
-  # space out checkpoints quadratically
-  a = 0 # first checkpoint step
-  b = total_steps-1 # last checkpoint step
-  t = np.linspace(0, 1, c.n_checkpoints)
-  checkpoint_steps = (a + (b - a) * (t**2)).astype(int)
+  total_steps = len(train_dataloader) * c.n_epochs
+  approx_unique_samples = len(train_dataloader.dataset) * c.batch_size
+  checkpoint_steps = np.linspace(0, total_steps, c.n_checkpoints, endpoint=False, dtype=int)
   
   eval_frequency = np.max((total_steps // c.n_eval, 1))
-  
+
   # Initialize model and wrap with DistributedDataParallel
   model = c.model_partial().to(device)
   model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -147,9 +124,9 @@ def _train(c: TrainRunConfig):
 
   scaler = torch.amp.GradScaler(device=device.type)
 
-  # Checkpoint directory
+  # Checkpoints and logging setup
   label = c.label or ""
-  checkpoint_dir = os.path.join(MODELS_DIR, c.name, (f"{c.experiment_group or ''}-{latent_dim}-i{c.dataset_config.img_size}-d{log_total_train_samples}-{label}"))
+  checkpoint_dir = os.path.join(MODELS_DIR, c.name, (f"{c.experiment_group or ''}-{latent_dim}-i{c.data_config.img_size}-d{log_total_train_samples}-{label}"))
   if is_primary:
     mkdir_empty(checkpoint_dir)
     if c.save_method == "state_dict":
@@ -157,10 +134,8 @@ def _train(c: TrainRunConfig):
       with open(os.path.join(checkpoint_dir, "model_params.json"), "w") as f:
         json.dump({
           "data_config": asdict(c.data_config) if c.data_config is not None else None,
-          "dataset_config": asdict(c.dataset_config) if c.dataset_config is not None else None,
           "model_params": c.model_params,
-          "type": c.type,
-            }, f, indent=4)
+        }, f, indent=4)
 
   logging.info(f"Saving model checkpoints to {checkpoint_dir}")
   
@@ -174,34 +149,28 @@ def _train(c: TrainRunConfig):
       "group": c.experiment_group,
       "name": c.name,
       "label": c.label,
-      "latent-dim": latent_dim,
-      "data-config": asdict(c.data_config) if c.data_config is not None else {},
-      "dataset-config": asdict(c.dataset_config) if c.dataset_config is not None else {},
-      "type": c.type,
+      "dataset-config": asdict(c.data_config) if c.data_config is not None else {},
       "n_params": sum(p.numel() for p in model.parameters()),
       "model_params": c.model_params,
       "learning-rate": c.learning_rate,
       "weight-decay": c.weight_decay,
-      "n-epochs": n_epochs,
+      "n-epochs": c.n_epochs,
       "batch-size": c.batch_size,
       "loss-fn": c.loss_fn.__class__.__name__,
       "checkpoint-dir": checkpoint_dir,
     })
     
-    log_images = False
-    
   logging.info(f"total steps {total_steps}")
-  logging.info(f"Data size {c.dataset_config.data_size}, batch size {c.batch_size}, epochs {n_epochs}")
-  logging.info(f"Training on 2^{log_total_train_samples} total samples, ~{batches_per_gpu_epoch} batches per epoch per GPU")
-  logging.info(f"Validation on {len(val_dataloader.dataset)} samples")
-      
-  # Training loop
+  logging.info(f"~{approx_unique_samples} samples, {c.n_epochs} epochs")
+  
+
   val_loss = None
   checkpoint_num = 0
   running_loss = 0
   start_time = time.time()
+  
   with tqdm(total=total_steps, disable=not is_primary, ncols=170) as t:
-    for epoch in range(n_epochs):
+    for epoch in range(c.n_epochs):
       if c.distributed:
         train_sampler.set_epoch(epoch)
       for i, batch in enumerate(train_dataloader):
@@ -213,7 +182,7 @@ def _train(c: TrainRunConfig):
               mem = psutil.virtual_memory()
               avg_loss = running_loss / 16
               t.set_description_str(f"Loss={avg_loss:.5f}" + (f" Val Loss={val_loss:.5f}" if val_loss is not None else ""))
-              t.set_postfix(epoch=f"{epoch}/{n_epochs}",batch=f"{i}/{batches_per_gpu_epoch}", gpus=f"{c.world_size}", mem=f"{mem.percent:.2f}%")
+              t.set_postfix(epoch=f"{epoch}/{c.n_epochs}",batch=f"{i}/{len(train_dataloader)}", gpus=f"{c.world_size}", mem=f"{mem.percent:.2f}%")
               if c.run is not None:
                   c.run['train/train_loss'].append(
                     value=avg_loss,
@@ -224,7 +193,7 @@ def _train(c: TrainRunConfig):
 
           if is_primary and (step % eval_frequency == 0):   
             # Evaluate the model
-            val_loss = eval_model(model=training_model.module if c.distributed else training_model, type_=c.type, latent_dim=latent_dim, loss_fn=c.loss_fn, val_data=val_data, device=device)
+            val_loss = eval_model(model=training_model.module if c.distributed else training_model, loss_fn=c.loss_fn, val_dataloader=val_dataloader, device=device)
             if c.run is not None:
               c.run["train/val_loss"].append(
                 value=val_loss,
@@ -300,8 +269,4 @@ def _train(c: TrainRunConfig):
         c.run['summary/val_loss'] = val_loss
 
       logging.info(f'Model checkpoints saved to \033[92m{checkpoint_dir}\033[0m')
-    
-
-"""
-torchrun --nproc_per_node=4 train.py
-"""
+  

@@ -165,8 +165,6 @@ class ClockDataset(Dataset):
       time_of_day = torch.tensor((hashed / 0xFFFFFFFF), dtype=torch.float32)  # in [0, 1)
       # invert is a boolean chosen with probability self.config.invert_prob
       invert = np.random.rand() < self.config.invert_prob
-    
-      
 
       # Convert to hour and minute
       total_minutes = time_of_day * 12 * 60 # in [0, 12*60)
@@ -181,6 +179,7 @@ class ClockDataset(Dataset):
       # Generate clock tensor
       clock_tensor = self.generator.generate_clock_tensor(hour, minute, invert=invert).to(self.config.device)
 
+        
       if self.config.augment is not None:
 
           # Add Gaussian noise

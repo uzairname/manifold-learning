@@ -14,50 +14,19 @@ import time
 import copy
 import neptune
 
-from utils.config import MODELS_DIR  
+from utils.config import MODELS_DIR 
+from utils.train_utils import BaseTrainRunConfig 
 
 
 @dataclass
-class TrainRunConfig:
+class TrainRunConfig(BaseTrainRunConfig):
   # model
-  model_class: nn.Module
-  type: typing.Literal["autoencoder", "encoder", "decoder"]
-  model_partial: typing.Callable = None
-  model_params: dict = None
-
-  # multiprocessing
-  max_gpus: int = None
-  rank: int = None
-  distributed: bool = True
-  world_size: int = None
-
-  # logging
-  log: bool = True
-  run: wandb.wandb_run.Run | None = None
-  experiment_group: str = None
-  name: str = None
-  notes: str = None
-  tags: list[str] = None
+  type: typing.Literal["autoencoder", "encoder", "decoder"] = "autoencoder"
 
   # data
   dataset_config: ClockDatasetConfig = None
   data_config: ClockConfig = None
   val_size: int = None
-
-  # hyperparameters
-  n_epochs: int = 1
-  batch_size: int = 64
-  optimizer: typing.Callable = None
-  learning_rate: float = None
-  weight_decay: float = None
-  loss_fn: nn.Module = nn.MSELoss()
-  accumulation_steps: int = 1
-
-  # checkpointing
-  n_eval: int = 64
-  n_checkpoints: int = None
-  save_method: typing.Literal["state_dict", "trace", "script"] = "state_dict"
-  label: str = ""
 
 
 def copy_model(trained_model: nn.Module, init_model: typing.Callable[[], nn.Module], device: str) -> nn.Module:
@@ -65,7 +34,6 @@ def copy_model(trained_model: nn.Module, init_model: typing.Callable[[], nn.Modu
     model_copy.load_state_dict(trained_model.state_dict())
     return model_copy.to(device)
   
-
 
 def eval_model(
   model: nn.Module,
@@ -153,6 +121,8 @@ class ModelCheckpoint:
   img_size: int
   dataloader: DataLoader
   val_dataloader: DataLoader
+  val_loss: float
+  step: int
   
 
 def load_model_and_dataset(
@@ -175,12 +145,22 @@ def load_model_and_dataset(
     state_dict = state_dict['model']
 
   with open(os.path.join(model_dir, 'model_params.json'), 'r') as f:
-    checkpoint_data = json.load(f)
-    model_params = checkpoint_data.get('model_params', {})
-    type_ = checkpoint_data['type']
-    dataset_config = checkpoint_data['dataset_config']
-    data_config = checkpoint_data['data_config']
+    run_data = json.load(f)
+    model_params = run_data.get('model_params', {})
+    type_ = run_data['type']
+    dataset_config = run_data['dataset_config']
+    data_config = run_data['data_config']
     
+  if checkpoint is not None:
+    with open(os.path.join(model_dir, f"{checkpoint}.json"), 'r') as f:
+      checkpoint_data = json.load(f)
+      step = checkpoint_data.get('step', None)
+      val_loss = checkpoint_data.get('val_loss', None)
+  else:
+    step = None
+    val_loss = None
+
+
   dataloader, val_dataloader, _, _ = get_dataloaders(
     data_config=ClockConfig(**data_config),
     dataset_config=ClockDatasetConfig(**dataset_config),
@@ -200,4 +180,6 @@ def load_model_and_dataset(
     img_size=model_params['img_size'],
     dataloader=dataloader,
     val_dataloader=val_dataloader,
+    val_loss=val_loss,
+    step=step,
   )

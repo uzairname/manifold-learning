@@ -1,4 +1,4 @@
-import os, errno
+import os, errno, math
 
 def silentremove(filename):
     try:
@@ -14,3 +14,18 @@ def mkdir_empty(directory):
   os.makedirs(directory, exist_ok=True)
   for f in os.listdir(directory):
     silentremove(os.path.join(directory, f))
+
+
+
+def is_prime(number):
+    if number <= 1:
+        return False
+    if number <= 3:
+        return True
+    if number % 2 == 0 or number % 3 == 0:
+        return False
+    for i in range(5, int(math.sqrt(number)) + 1, 6):
+        if number % i == 0 or number % (i + 2) == 0:
+            return False
+    return True
+
