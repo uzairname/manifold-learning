@@ -27,9 +27,9 @@ class ModArithmeticCpDataset(Dataset):
   parameters:
   - p: prime number
 
-  Data points consist of a tuple (a, b, y) where 
-  - a, b are integers in [0, p), 1 hot encoded
-  - y is the result of (a + b) mod p, 1 hot encoded
+  Data points consist of a tuple (x, y) where 
+  - x is a sequence "ab" where a and b are one-hot encoded integers in [0, p-1] 
+  - y is the result of (a + b) mod p, one-hot encoded.
   """
   
   def __init__(self, config: ArithmeticDatasetConfig):
@@ -38,17 +38,24 @@ class ModArithmeticCpDataset(Dataset):
     self.p = p
     
     # Generate data
-    all_a = F.one_hot(torch.arange(p), num_classes=p).repeat(1, p).reshape(p**2, p)
-    all_b = F.one_hot(torch.arange(p), num_classes=p).repeat(p, 1).reshape(p**2, p)
-    all_y = F.one_hot((torch.arange(p).unsqueeze(1) + torch.arange(p).unsqueeze(0)) % p, num_classes=p).reshape(p**2, p)
-    
-    self.data = torch.cat((all_a, all_b, all_y), dim=1).reshape(p**2, 3, p)
+    all_a = torch.arange(p).repeat_interleave(p).reshape(p**2, 1)
+    all_b = torch.arange(p).repeat(p, 1).reshape(p**2, 1)
+    self.x = torch.cat((all_a, all_b), dim=1)
+
+    y_int = (torch.arange(p).unsqueeze(1) + torch.arange(p).unsqueeze(0)) % p
+    # assign noise to some labels
+    if config.noise_frac > 0.0:
+      num_noise = int(config.noise_frac * p**2)
+      noise_indices = np.random.choice(p**2, num_noise, replace=False)
+      y_int[noise_indices] = np.random.randint(0, p, size=num_noise)
+    self.y = y_int.reshape(p**2)
 
   def __len__(self):
-    return len(self.data)
+    return self.x.shape[0]
 
   def __getitem__(self, idx):
-    return self.data[idx]
+    return self.x[idx], self.y[idx]
+    
 
 
 
