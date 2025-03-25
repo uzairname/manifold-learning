@@ -108,7 +108,7 @@ def _train(c: TrainRunConfig):
   total_steps = len(train_dataloader) * c.n_epochs
   approx_unique_samples = len(train_dataloader.dataset) * c.batch_size
   
-  checkpoint_freq = max((total_steps // c.n_checkpoints), 1)
+  checkpoint_freq = None if not c.n_checkpoints else max((total_steps // c.n_checkpoints), 1)
   eval_frequency = max((total_steps // c.n_eval, 1))
   
   # Initialize model and wrap with DistributedDataParallel
@@ -189,7 +189,7 @@ def _train(c: TrainRunConfig):
               if c.run is not None:
                   c.run['train/train_loss'].append(
                     value=avg_loss,
-                    step=time.time() - start_time
+                    step=step
                   )
               running_loss = 0
 
@@ -199,11 +199,11 @@ def _train(c: TrainRunConfig):
             if c.run is not None:
               c.run["train/val_loss"].append(
                 value=val_loss,
-                step=time.time() - start_time
+                step=step
               )
 
           # Save model checkpoint
-          if is_primary and (step % checkpoint_freq == 0):
+          if is_primary and checkpoint_freq and (step % checkpoint_freq == 0):
             val_loss = eval_and_save_model(c, training_model.module if c.distributed else training_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), val_data)
             with open(os.path.join(checkpoint_dir, f"{checkpoint_num}.json"), "w") as f:
               json.dump({
@@ -235,7 +235,7 @@ def _train(c: TrainRunConfig):
 
           # Log gradient norms
           if is_primary and (step % 16 == 0):
-            log_norms(run=c.run, model=training_model, time=time.time() - start_time)
+            log_norms(run=c.run, model=training_model, step=step)
               
           torch.nn.utils.clip_grad_norm_(training_model.parameters(), 0.2)
           scaler.step(optimizer)

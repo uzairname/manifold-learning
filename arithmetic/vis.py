@@ -30,10 +30,10 @@ def visualize_data(dataloader: DataLoader):
 
   plt.subplot(1, 2, 1)
   plt.scatter(all_x_np[:, 0], all_x_np[:, 1], c=all_y_np, cmap='viridis', alpha=0.7, s=10)
-  plt.colorbar(label='c value')
+  plt.colorbar(label='modular sum label')
   plt.xlabel('a value')
   plt.ylabel('b value')
-  plt.title('Relationship between a, b and y')
+  plt.title('Dataset a+b mod p')
 
   plt.tight_layout()
   plt.show()

@@ -25,7 +25,7 @@ def setup_logging(rank:int=None):
     logger.addHandler(handler)
 
 
-def log_norms(model: nn.Module, run: Run=None, time=None):
+def log_norms(model: nn.Module, run: Run=None, step=None):
   """
   Logs the weight norms and gradient norms of the model.
   """
@@ -59,17 +59,17 @@ def log_norms(model: nn.Module, run: Run=None, time=None):
   if run is not None:
     run['train/grad_norms/std'].append(
       value=std_grad,
-      step=time
+      step=step
     )
     run['train/grad_norms/mean'].append(
       value=mean_grad,
-      step=time
+      step=step
     )
     run['train/grad_norms/max'].append(
       value=max_grad,
-      step=time
+      step=step
     )
     run['train/weight_norms/mean'].append(
       value=mean_norm,
-      step=time
+      step=step
     )

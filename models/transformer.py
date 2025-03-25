@@ -33,11 +33,11 @@ class PosEmbed(nn.Module):
 
 
 class LayerNorm(nn.Module):
-  def __init__(self, in_dim):
+  def __init__(self, d_model):
     super().__init__()
-    self.e = 1e-6
-    self.w = nn.Parameter(t.ones(in_dim))
-    self.b = nn.Parameter(t.zeros(in_dim))
+    self.e = 1e-4
+    self.w = nn.Parameter(t.ones(d_model))
+    self.b = nn.Parameter(t.zeros(d_model))
     
   def forward(self, x):
     return self.w * (x - x.mean(dim=-1, keepdim=True)) / (x.std(dim=-1, keepdim=True) + self.e) + self.b
@@ -86,14 +86,16 @@ class TransformerBlock(nn.Module):
   def __init__(self, d_model, max_seq_len, n_heads, d_mlp):
     super().__init__()
     
-    self.ln1 = LayerNorm(d_model)
+    # self.ln1 = LayerNorm(d_model)
     self.attention = Attention(d_model, n_heads, max_seq_len)
-    self.ln2 = LayerNorm(d_model)
+    # self.ln2 = LayerNorm(d_model)
     self.mlp = MLP(d_model, d_model, hidden_dim=d_mlp)
 
   def forward(self, x):
-    x = x + self.attention(self.ln1(x))
-    x = x + self.mlp(self.ln2(x))
+    # x = x + self.attention(self.ln1(x))
+    x = x + self.attention(x)
+    # x = x + self.mlp(self.ln2(x))
+    x = x + self.mlp(x)
     return x
 
 
@@ -110,7 +112,7 @@ class Transformer(nn.Module):
       for _ in range(n_layers)
     ])
     
-    self.ln = LayerNorm(d_model)
+    # self.ln = LayerNorm(d_model)
     self.unembed = Unembed(n_vocab=n_vocab, d_model=d_model)
 
   def forward(self, x):
@@ -120,7 +122,7 @@ class Transformer(nn.Module):
     for transformer in self.transformer_blocks:
       x = transformer(x)
     
-    x = self.ln(x)
+    # x = self.ln(x)
     x = self.unembed(x)
     if self.last_token:
       x = x[..., -1, :]
