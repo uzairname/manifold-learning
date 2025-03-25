@@ -25,7 +25,7 @@ from utils.logging import log_norms, setup_logging
 from utils.utils import mkdir_empty
 
 from datasets.arithmetic import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
-from arithmetic.utils import TrainRunConfig, eval_and_save_model, eval_model
+from tasks.arithmetic.utils import TrainRunConfig, eval_and_save_model, eval_model
 
 
 

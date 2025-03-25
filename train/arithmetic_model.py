@@ -3,8 +3,8 @@ from models.transformer import Transformer
 import numpy as np
 import torch.nn as nn
 
-from arithmetic.utils import TrainRunConfig
-from arithmetic import train_arithmetic_model
+from tasks.arithmetic.utils import TrainRunConfig
+from tasks.arithmetic import train_arithmetic_model
 
 from dotenv import load_dotenv
 load_dotenv()
