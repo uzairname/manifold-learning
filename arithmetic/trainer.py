@@ -17,17 +17,16 @@ import neptune
 from neptune.utils import stringify_unsupported
 from tqdm import tqdm
 
+
 from utils.config import MODELS_DIR
-from utils.multiprocessing_utils import process_group_cleanup, process_group_setup
-from utils.train_utils import BaseTrainRunConfig, setup_logging
-from arithmetic.dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
+from utils.multiprocessing import process_group_cleanup, process_group_setup
+from utils.train import BaseTrainRunConfig
+from utils.logging import log_norms, setup_logging
 from utils.utils import mkdir_empty
 
+from datasets.arithmetic import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
+from arithmetic.utils import TrainRunConfig, eval_and_save_model, eval_model
 
-@dataclass
-class TrainRunConfig(BaseTrainRunConfig):
-  data_config: ArithmeticDatasetConfig = ArithmeticDatasetConfig()
-  val_frac=0.0
 
 
 def train_arithmetic_model(c: TrainRunConfig):
@@ -78,11 +77,11 @@ def train_process(rank, c: TrainRunConfig):
     
     if c.run is not None:
       c.run.stop()
-      
+
+
 def _train(c: TrainRunConfig):
   
   is_primary = c.rank == 0 or not c.distributed
-  latent_dim = c.model_params['latent_dim']   
 
   if c.distributed:
     device = torch.device(f"cuda:{c.rank}")
@@ -93,7 +92,7 @@ def _train(c: TrainRunConfig):
   torch.autograd.set_detect_anomaly(True)
 
   # Get dataloaders
-  train_dataloader, val_dataloader, train_sampler, _ = get_mod_arithmetic_cp_dataloaders(
+  train_dataloader, val_dataloader, train_sampler = get_mod_arithmetic_cp_dataloaders(
       data_config=c.data_config,
       val_frac=c.val_frac,
       batch_size=c.batch_size,
@@ -101,12 +100,17 @@ def _train(c: TrainRunConfig):
       rank=c.rank,
   )
   
+  if is_primary:
+    val_data = [batch for batch in val_dataloader]
+  else:
+    val_data = None
+  
   total_steps = len(train_dataloader) * c.n_epochs
   approx_unique_samples = len(train_dataloader.dataset) * c.batch_size
-  checkpoint_steps = np.linspace(0, total_steps, c.n_checkpoints, endpoint=False, dtype=int)
   
-  eval_frequency = np.max((total_steps // c.n_eval, 1))
-
+  checkpoint_freq = max((total_steps // c.n_checkpoints), 1)
+  eval_frequency = max((total_steps // c.n_eval, 1))
+  
   # Initialize model and wrap with DistributedDataParallel
   model = c.model_partial().to(device)
   model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -126,7 +130,7 @@ def _train(c: TrainRunConfig):
 
   # Checkpoints and logging setup
   label = c.label or ""
-  checkpoint_dir = os.path.join(MODELS_DIR, c.name, (f"{c.experiment_group or ''}-{latent_dim}-i{c.data_config.img_size}-d{log_total_train_samples}-{label}"))
+  checkpoint_dir = os.path.join(MODELS_DIR, c.name, (f"{c.experiment_group or ''}-{label}"))
   if is_primary:
     mkdir_empty(checkpoint_dir)
     if c.save_method == "state_dict":
@@ -174,7 +178,6 @@ def _train(c: TrainRunConfig):
       if c.distributed:
         train_sampler.set_epoch(epoch)
       for i, batch in enumerate(train_dataloader):
-
           # Logging
           step = i + epoch * len(train_dataloader)
           # Log the loss
@@ -189,53 +192,37 @@ def _train(c: TrainRunConfig):
                     step=time.time() - start_time
                   )
               running_loss = 0
-        
 
-          if is_primary and (step % eval_frequency == 0):   
-            # Evaluate the model
-            val_loss = eval_model(model=training_model.module if c.distributed else training_model, loss_fn=c.loss_fn, val_dataloader=val_dataloader, device=device)
+          # Evaluate the model
+          if is_primary and (step % eval_frequency == 0):
+            val_loss = eval_model(model=training_model.module if c.distributed else training_model, loss_fn=c.loss_fn, val_data=val_data, device=device)
             if c.run is not None:
               c.run["train/val_loss"].append(
                 value=val_loss,
                 step=time.time() - start_time
               )
 
-            # log image
-            if c.run is not None and log_images:
-              c.run['images'].append(neptune.types.File.as_image(imgs[0].cpu()))
-
           # Save model checkpoint
-          if is_primary and (step == checkpoint_steps[checkpoint_num]):
+          if is_primary and (step % checkpoint_freq == 0):
             val_loss = eval_and_save_model(c, training_model.module if c.distributed else training_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), val_data)
             with open(os.path.join(checkpoint_dir, f"{checkpoint_num}.json"), "w") as f:
               json.dump({
-                "step": step  ,
+                "step": step,
                 "epoch": epoch,
                 "batch": i,
                 "val_loss": val_loss,
               }, f, indent=4)
             checkpoint_num += 1
 
-
           # Optimization step
-
-          imgs, clean_imgs, labels2d, labels1d = batch
-
-          labels = labels1d.unsqueeze(1) if latent_dim == 1 else labels2d
-          if c.type == "encoder":
-              input = imgs.to(device)
-              output = labels.to(device)
-          elif c.type == "decoder":
-              input = labels.to(device)
-              output = clean_imgs.to(device)
-          elif c.type == "autoencoder":
-              input = imgs.to(device)
-              output = clean_imgs.to(device)
+          x, y = batch
+          x = x.to(device)
+          y = y.to(device)
               
           # Forward pass with AMP broadcast for mixed precision
           with torch.amp.autocast(device_type=device.type):
-            pred = training_model(input)
-            loss = criterion(pred, output)
+            pred = training_model(x)  # Get the last token's prediction
+            loss = criterion(pred, y)
 
           # Average loss across all GPUs for logging
           loss_tensor = loss.clone().detach()
@@ -257,16 +244,16 @@ def _train(c: TrainRunConfig):
 
           if is_primary:
             t.update(1) 
-                        
+
   time_taken = time.time() - start_time
 
   if c.run is not None:
     c.run['summary/time_taken'] = time_taken
   # Evaluate and save final loss              
   if is_primary:
-      val_loss = eval_and_save_model(c, training_model.module if c.distributed else training_model.module, device, os.path.join(checkpoint_dir, "final.pt"), val_data)
+      val_loss = eval_and_save_model(c, training_model.module if c.distributed else training_model, device, os.path.join(checkpoint_dir, "final.pt"), val_data)
       if c.run is not None:
         c.run['summary/val_loss'] = val_loss
 
       logging.info(f'Model checkpoints saved to \033[92m{checkpoint_dir}\033[0m')
-  
+

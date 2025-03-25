@@ -20,9 +20,9 @@ from tqdm import tqdm
 from utils.config import MODELS_DIR
 from clock.utils import TrainRunConfig, eval_and_save_model, eval_model
 from utils.logging import setup_logging
-from utils.train_utils import log_norms
+from utils.logging import log_norms
 from utils.utils import mkdir_empty
-from utils.multiprocessing_utils import process_group_cleanup, process_group_setup
+from utils.multiprocessing import process_group_cleanup, process_group_setup
 
 import neptune
 from neptune.utils import stringify_unsupported

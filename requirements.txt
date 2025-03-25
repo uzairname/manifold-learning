@@ -7,7 +7,7 @@ umap-learn
 matplotlib
 seaborn
 tqdm
-wandb
+neptune
 
 pillow
 pandas

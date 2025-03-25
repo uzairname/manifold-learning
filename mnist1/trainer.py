@@ -18,9 +18,9 @@ from tqdm import tqdm
 
 from mnist1.mnist import TrainRunConfig, eval_and_save_model, get_mnist_dataloaders
 from utils.logging import setup_logging
-from utils.train_utils import log_norms
+from utils.logging import log_norms
 from utils.utils import mkdir_empty
-from utils.multiprocessing_utils import process_group_cleanup, process_group_setup
+from utils.multiprocessing import process_group_cleanup, process_group_setup
 
 MODELS_DIR="saved_models/mnist"
 DATASET_NAME="mnist"

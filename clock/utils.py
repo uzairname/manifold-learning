@@ -15,7 +15,7 @@ import copy
 import neptune
 
 from utils.config import MODELS_DIR 
-from utils.train_utils import BaseTrainRunConfig 
+from utils.train import BaseTrainRunConfig 
 
 
 @dataclass

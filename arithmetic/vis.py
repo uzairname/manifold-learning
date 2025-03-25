@@ -21,7 +21,7 @@ def visualize_data(dataloader: DataLoader):
 
   # Concatenate all batches
   all_x_np = torch.cat(all_x).numpy()
-  all_y_np = torch.cat(all_y).numpy()
+  all_y_np = torch.argmax(torch.cat(all_y), dim=-1).numpy()
   
   print("Number of samples:", all_x_np.shape[0])
 
