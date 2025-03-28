@@ -106,11 +106,10 @@ def _train(c: TrainRunConfig):
   total_steps = len(train_dataloader) * c.n_epochs
   approx_unique_samples = len(train_dataloader.dataset) * c.batch_size
   
-  # checkpoint_freq = None if not c.n_checkpoints else max((total_steps // c.n_checkpoints), 1)
-  checkpoint_steps = np.linspace(0, total_steps-1, c.n_checkpoints).tolist()
+  checkpoint_steps = np.linspace(0, total_steps-1, c.n_checkpoints).astype(int).tolist()
   eval_frequency = None if not c.n_evals else max((total_steps // c.n_evals, 1))
   
-  # Initialize model and wrap with DistributedDataParallel
+  # Initialize model
   model = c.model_partial().to(device)
   model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 

@@ -50,9 +50,12 @@ class MLPClassifier(nn.Module):
 class MLP(nn.Module):
   def __init__(self, dims=[1,1], activation: ActivationType='tanh'):
     super().__init__()
+
     self.fc = nn.Sequential()
+
     for i in range(len(dims)-1):
       is_last = i == len(dims)-2
+
       self.fc.extend([
         nn.Linear(dims[i], dims[i+1]),
         nn.BatchNorm1d(dims[i+1]),

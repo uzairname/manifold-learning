@@ -18,7 +18,6 @@ class ArithmeticDatasetConfig:
   p: int = 113  # prime number for modular arithmetic
   noise_frac: float = 0.0  # fraction of labels to be noise
 
-
 class ModArithmeticCpDataset(Dataset):
   """
   Modular arithmetic on C_p
@@ -34,6 +33,8 @@ class ModArithmeticCpDataset(Dataset):
     p = config.p
     assert is_prime(p), f"p={p} is not prime"
     self.p = p
+    
+    
     
     # Generate data
     all_a = torch.arange(p).repeat_interleave(p).reshape(p**2, 1) # token 1
