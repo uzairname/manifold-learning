@@ -5,12 +5,12 @@ import numpy as np
 
 
 class Embed(nn.Module):
-    def __init__(self, n_vocab, d_model, init_scale=1):
-        super().__init__()
-        self.W_embed = nn.Parameter(t.randn(d_model, n_vocab)/np.sqrt(d_model)*init_scale)
-    
-    def forward(self, x):
-      return t.einsum('dbp -> bpd', self.W_embed[:, x])
+  def __init__(self, n_vocab, d_model, init_scale=1):
+      super().__init__()
+      self.W_embed = nn.Parameter(t.randn(d_model, n_vocab)/np.sqrt(d_model)*init_scale)
+  
+  def forward(self, x):
+    return t.einsum('dbp -> bpd', self.W_embed[:, x])
 
 
 class Unembed(nn.Module):
@@ -20,7 +20,6 @@ class Unembed(nn.Module):
   
   def forward(self, x):
     return x @ self.W_ue
-
 
 class PosEmbed(nn.Module):
   def __init__(self, d_model, seq_len, init_scale=1):
@@ -32,22 +31,11 @@ class PosEmbed(nn.Module):
     return x + self.W_pos[:in_seq_len]
 
 
-class LayerNorm(nn.Module):
-  def __init__(self, d_model, init_scale=1):
-    super().__init__()
-    self.e = 1e-4
-    self.w = nn.Parameter(t.ones(d_model))
-    self.b = nn.Parameter(t.zeros(d_model))
-    
-  def forward(self, x: t.Tensor):
-    return self.w * (x - x.mean(dim=-1, keepdim=True)) / (t.sqrt(x.var(dim=-1, keepdim=True) + self.e)) + self.b
-    
-
 class Attention(nn.Module):
   def __init__(self, d_model, n_heads, max_seq_len, init_scale=1):
     super().__init__()
 
-    assert d_model % n_heads == 0, "embed_dim must be divisible by num_heads"
+    assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
     self.head_dim = d_model // n_heads
 
     self.W_qkv = nn.Parameter(t.randn(n_heads, d_model, self.head_dim * 3)/np.sqrt(d_model)*init_scale)
@@ -71,50 +59,56 @@ class Attention(nn.Module):
 
 
 class MLP(nn.Module):
-  def __init__(self, in_dim, out_dim, hidden_dim, init_scale=1):
+  def __init__(self, d_model, hidden_dim, init_scale=1):
     super().__init__()
-    self.W1 = nn.Parameter(t.randn(in_dim, hidden_dim) / np.sqrt(in_dim) * init_scale)
+    self.W1 = nn.Parameter(t.randn(d_model, hidden_dim) / np.sqrt(d_model) * init_scale)
     self.b1 = nn.Parameter(t.zeros(hidden_dim))
-    self.W2 = nn.Parameter(t.randn(hidden_dim, out_dim) / np.sqrt(hidden_dim) * init_scale)
-    self.b2 = nn.Parameter(t.zeros(out_dim))
+    self.W2 = nn.Parameter(t.randn(hidden_dim, d_model) / np.sqrt(d_model) * init_scale)
+    self.b2 = nn.Parameter(t.zeros(d_model))
     
   def forward(self, x: t.Tensor):
-    x = F.gelu(x @ self.W1 + self.b1)
+    x = F.relu(x @ self.W1 + self.b1)
     x = x @ self.W2 + self.b2
     return x
 
 
 class TransformerBlock(nn.Module):
-  def __init__(self, d_model, max_seq_len, n_heads, d_mlp, init_scale=1):
+  def __init__(self, d_model, max_seq_len, n_heads, d_mlp, init_scale=1, ln_eps=1e-2, use_ln=True):
     super().__init__()
-    
-    self.ln1 = LayerNorm(d_model, init_scale=init_scale)
+    self.use_ln = use_ln
+    if use_ln:
+      self.ln1 = nn.LayerNorm(d_model, eps=ln_eps)
+      self.ln2 = nn.LayerNorm(d_model, eps=ln_eps)
+
     self.attention = Attention(d_model, n_heads, max_seq_len, init_scale=init_scale)
-    self.ln2 = LayerNorm(d_model, init_scale=init_scale)
-    self.mlp = MLP(d_model, d_model, hidden_dim=d_mlp, init_scale=init_scale)
+    self.mlp = MLP(d_model, hidden_dim=d_mlp, init_scale=init_scale)
 
   def forward(self, x: t.Tensor):
-    x = x + self.attention(self.ln1(x))
-    # x = x + self.attention(x)
-    x = x + self.mlp(self.ln2(x))
-    # x = x + self.mlp(x)
+    if self.use_ln: 
+      x = self.ln1(x)
+    x = x + self.attention(x)
+    if self.use_ln: 
+      x = self.ln2(x)
+    x = x + self.mlp(x)
     return x
 
 
 class Transformer(nn.Module):
-  def __init__(self, d_model, n_vocab, max_seq_len, n_heads, n_layers, d_mlp, last_token=True, init_scale=1):
+  def __init__(self, d_model, n_vocab, max_seq_len, n_heads, n_layers, d_mlp, last_token=True, init_scale=1, ln_eps=1e-2, use_ln=True):
     super().__init__()
     
+    self.use_ln = use_ln
     self.last_token = last_token
     self.embedding = Embed(n_vocab=n_vocab, d_model=d_model, init_scale=init_scale)
     self.pos_embedding = PosEmbed(d_model=d_model, seq_len=max_seq_len, init_scale=init_scale)
     
     self.transformer_blocks = nn.ModuleList([
-      TransformerBlock(d_model=d_model, max_seq_len=max_seq_len, n_heads=n_heads, d_mlp=d_mlp, init_scale=init_scale)
+      TransformerBlock(d_model=d_model, max_seq_len=max_seq_len, n_heads=n_heads, d_mlp=d_mlp, init_scale=init_scale, ln_eps=ln_eps, use_ln=use_ln)
       for _ in range(n_layers)
     ])
     
-    self.ln = LayerNorm(d_model=d_model, init_scale=init_scale)
+    if use_ln: 
+      self.ln = nn.LayerNorm(d_model, eps=ln_eps)
     self.unembed = Unembed(n_vocab=n_vocab, d_model=d_model, init_scale=init_scale)
 
   def forward(self, x: t.Tensor):
@@ -124,7 +118,8 @@ class Transformer(nn.Module):
     for transformer in self.transformer_blocks:
       x = transformer(x)
     
-    x = self.ln(x)
+    if self.use_ln:
+      x = self.ln(x)
     x = self.unembed(x)
     if self.last_token:
       x = x[..., -1, :]

@@ -24,7 +24,6 @@ def load_model_script(
     Load the trained model and dataset for inference.
     """
 
-    
     # Load model
     model_file = f"{latent_dim}-i{img_size}-{postfix}"
     
@@ -70,7 +69,6 @@ def get_outputs(cp: ModelCheckpoint, limit=None):
       yield noisy_img, img, label1d, label2d, latent, reconstructed
 
 
-
 def map_inputs(cp: ModelCheckpoint, forward_fn: typing.Callable, limit=None):
   """
   Given a forward function that takes an input according to the type and returns an output of batches,
@@ -101,9 +99,6 @@ def map_inputs(cp: ModelCheckpoint, forward_fn: typing.Callable, limit=None):
         if limit is not None and count >= limit:
           return
   
-
-
-
 
 
 def show_data(dataset: Dataset, device=device):

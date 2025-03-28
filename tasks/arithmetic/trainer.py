@@ -20,30 +20,31 @@ from tqdm import tqdm
 
 from utils.config import MODELS_DIR
 from utils.multiprocessing import process_group_cleanup, process_group_setup
-from utils.train import BaseTrainRunConfig
+from utils.train import BaseTrainRunConfig, set_all_seeds
 from utils.logging import log_norms, setup_logging
 from utils.utils import mkdir_empty
 
-from datasets.arithmetic import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
+from tasks.arithmetic.dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
 from tasks.arithmetic.utils import TrainRunConfig, eval_and_save_model, eval_model
 
 
 
 def train_arithmetic_model(c: TrainRunConfig):
   
-  # Determine the world size
+  # Determine the world size based on config and gpus available
   c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
   c.distributed = c.world_size > 1
   
-  # Set model partial and name
+  # Set model partial and run name
   c.model_partial = functools.partial(c.model_class, **(c.model_params or {}))
   
-  if c.name is None:
-    c.name = c.model_class.__name__
+  c.run_name = c.run_name or c.model_class.__name__
     
-  print(f"Training model {c.name} with {c.world_size} GPUs")
+  print(f"Training model {c.run_name} with {c.world_size} GPUs")
 
   torch.cuda.empty_cache()
+  set_all_seeds()
+  torch.autograd.set_detect_anomaly(True)
 
   if c.distributed:
     mp.spawn(
@@ -53,7 +54,6 @@ def train_arithmetic_model(c: TrainRunConfig):
       join=True,
     )
   else:
-    # 1 or 0 gpus
     setup_logging()
     c.rank = None
     _train(c)
@@ -61,9 +61,8 @@ def train_arithmetic_model(c: TrainRunConfig):
   if c.run is not None:
     c.run.stop()
   print('Done training')
-  
-  
-  
+
+
 def train_process(rank, c: TrainRunConfig):
   try:
     c.rank = rank
@@ -87,9 +86,8 @@ def _train(c: TrainRunConfig):
     device = torch.device(f"cuda:{c.rank}")
   else:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-  torch.manual_seed(42)  
-  torch.autograd.set_detect_anomaly(True)
+ 
+  
 
   # Get dataloaders
   train_dataloader, val_dataloader, train_sampler = get_mod_arithmetic_cp_dataloaders(
@@ -108,29 +106,30 @@ def _train(c: TrainRunConfig):
   total_steps = len(train_dataloader) * c.n_epochs
   approx_unique_samples = len(train_dataloader.dataset) * c.batch_size
   
-  checkpoint_freq = None if not c.n_checkpoints else max((total_steps // c.n_checkpoints), 1)
-  eval_frequency = max((total_steps // c.n_eval, 1))
+  # checkpoint_freq = None if not c.n_checkpoints else max((total_steps // c.n_checkpoints), 1)
+  checkpoint_steps = np.linspace(0, total_steps-1, c.n_checkpoints).tolist()
+  eval_frequency = None if not c.n_evals else max((total_steps // c.n_evals, 1))
   
   # Initialize model and wrap with DistributedDataParallel
   model = c.model_partial().to(device)
   model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+
   if c.distributed:
     training_model = nn.parallel.DistributedDataParallel(model, device_ids=[c.rank])
   else:
     training_model = model
 
-  if c.optimizer is not None:
-    optimizer = c.optimizer(model)
+  if c.get_optimizer is not None:
+    optimizer = c.get_optimizer(model)
   else:
     optimizer = torch.optim.AdamW(model.parameters(), lr=c.learning_rate, weight_decay=c.weight_decay)
     
-  criterion = c.loss_fn
+  criterion = c.criterion
 
   scaler = torch.amp.GradScaler(device=device.type)
 
   # Checkpoints and logging setup
-  label = c.label or ""
-  checkpoint_dir = os.path.join(MODELS_DIR, c.name, (f"{c.experiment_group or ''}-{label}"))
+  checkpoint_dir = os.path.join(MODELS_DIR, c.run_name)
   if is_primary:
     mkdir_empty(checkpoint_dir)
     if c.save_method == "state_dict":
@@ -151,8 +150,8 @@ def _train(c: TrainRunConfig):
     
     c.run['config'] = stringify_unsupported({
       "group": c.experiment_group,
-      "name": c.name,
-      "label": c.label,
+      "name": c.run_name,
+      "label": c.checkpoint_dir_name,
       "dataset-config": asdict(c.data_config) if c.data_config is not None else {},
       "n_params": sum(p.numel() for p in model.parameters()),
       "model_params": c.model_params,
@@ -160,13 +159,13 @@ def _train(c: TrainRunConfig):
       "weight-decay": c.weight_decay,
       "n-epochs": c.n_epochs,
       "batch-size": c.batch_size,
-      "loss-fn": c.loss_fn.__class__.__name__,
+      "loss-fn": c.criterion.__class__.__name__,
       "checkpoint-dir": checkpoint_dir,
     })
     
   logging.info(f"total steps {total_steps}")
   logging.info(f"~{approx_unique_samples} samples, {c.n_epochs} epochs")
-  
+
 
   val_loss = None
   checkpoint_num = 0
@@ -178,9 +177,10 @@ def _train(c: TrainRunConfig):
       if c.distributed:
         train_sampler.set_epoch(epoch)
       for i, batch in enumerate(train_dataloader):
-          # Logging
+          # Logging & checkpointing
           step = i + epoch * len(train_dataloader)
-          # Log the loss
+          
+          # Log info
           if is_primary and (step % 16 == 0) and step > 0:
               mem = psutil.virtual_memory()
               avg_loss = running_loss / 16
@@ -194,8 +194,8 @@ def _train(c: TrainRunConfig):
               running_loss = 0
 
           # Evaluate the model
-          if is_primary and (step % eval_frequency == 0):
-            val_loss = eval_model(model=training_model.module if c.distributed else training_model, loss_fn=c.loss_fn, val_data=val_data, device=device)
+          if is_primary and eval_frequency and (step % eval_frequency == 0):
+            val_loss = eval_model(model=training_model.module if c.distributed else training_model, loss_fn=c.criterion, val_data=val_data, device=device)
             if c.run is not None:
               c.run["train/val_loss"].append(
                 value=val_loss,
@@ -203,7 +203,7 @@ def _train(c: TrainRunConfig):
               )
 
           # Save model checkpoint
-          if is_primary and checkpoint_freq and (step % checkpoint_freq == 0):
+          if is_primary and step in checkpoint_steps:
             val_loss = eval_and_save_model(c, training_model.module if c.distributed else training_model, device, os.path.join(checkpoint_dir, f"{checkpoint_num}.pt"), val_data)
             with open(os.path.join(checkpoint_dir, f"{checkpoint_num}.json"), "w") as f:
               json.dump({
@@ -215,28 +215,26 @@ def _train(c: TrainRunConfig):
             checkpoint_num += 1
 
           # Optimization step
-          x, y = batch
+          x, y, _ = batch
           x = x.to(device)
           y = y.to(device)
               
           # Forward pass with AMP broadcast for mixed precision
           with torch.amp.autocast(device_type=device.type):
-            pred = training_model(x)  # Get the last token's prediction
+            pred = training_model(x)
             loss = criterion(pred, y)
 
-          # Average loss across all GPUs for logging
           loss_tensor = loss.clone().detach()
           if c.distributed:
             dist.all_reduce(loss_tensor, op=dist.ReduceOp.AVG)
           running_loss += loss_tensor.item()
-          
+
           scaler.scale(loss).backward()
           scaler.unscale_(optimizer)
-
-          # Log gradient norms
+          
           if is_primary and (step % 16 == 0):
             log_norms(run=c.run, model=training_model, step=step)
-              
+
           torch.nn.utils.clip_grad_norm_(training_model.parameters(), 0.2)
           scaler.step(optimizer)
           scaler.update()
@@ -245,13 +243,17 @@ def _train(c: TrainRunConfig):
           if is_primary:
             t.update(1) 
 
-  time_taken = time.time() - start_time
-
-  if c.run is not None:
-    c.run['summary/time_taken'] = time_taken
-  # Evaluate and save final loss              
+  # Evaluate and save final loss
   if is_primary:
       val_loss = eval_and_save_model(c, training_model.module if c.distributed else training_model, device, os.path.join(checkpoint_dir, "final.pt"), val_data)
+      with open(os.path.join(checkpoint_dir, f"{checkpoint_num}.json"), "w") as f:
+              json.dump({
+                "step": step,
+                "epoch": epoch,
+                "batch": i,
+                "val_loss": val_loss,
+              }, f, indent=4)
+
       if c.run is not None:
         c.run['summary/val_loss'] = val_loss
 

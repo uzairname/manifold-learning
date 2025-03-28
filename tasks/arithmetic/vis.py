@@ -1,9 +1,9 @@
 from typing import *
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
-
 
 
 def visualize_data(dataloader: DataLoader):
@@ -21,8 +21,8 @@ def visualize_data(dataloader: DataLoader):
 
   # Concatenate all batches
   all_x_np = torch.cat(all_x).numpy()
-  all_y_np = torch.argmax(torch.cat(all_y), dim=-1).numpy()
-  
+  all_y_np = torch.cat(all_y).numpy()
+    
   print("Number of samples:", all_x_np.shape[0])
 
   # Scatter plot of the first 1000 points
@@ -37,3 +37,14 @@ def visualize_data(dataloader: DataLoader):
 
   plt.tight_layout()
   plt.show()
+  
+  
+  
+  
+def map_inputs(dataloader: DataLoader, model: nn.Module, fn, limit=None):
+  
+  count = 0
+  
+  with torch.no_grad():
+    for x, y in dataloader:
+      3

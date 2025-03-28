@@ -1,8 +1,8 @@
-from datasets.clock import ClockConfig, ClockDatasetConfig
+from tasks.clock.dataset import ClockConfig, ClockDatasetConfig
 from models.encoders import ConvMLPEncoder, MLPEncoder
-from clock.utils import TrainRunConfig
-from clock.utils import TrainRunConfig
-from clock import train_clock_model
+from tasks.clock.utils import TrainRunConfig
+from tasks.clock.utils import TrainRunConfig
+from tasks.clock import train_clock_model
 import numpy as np
 
 if __name__ == "__main__":

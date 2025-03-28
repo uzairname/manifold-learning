@@ -6,7 +6,6 @@ import numpy as np
 from utils.utils import is_prime
 from dataclasses import dataclass
 
-
 """
 Datasets of arithmetic problems
 """
@@ -37,29 +36,29 @@ class ModArithmeticCpDataset(Dataset):
     self.p = p
     
     # Generate data
-    all_a = torch.arange(p).repeat_interleave(p).reshape(p**2, 1)
-    all_b = torch.arange(p).repeat(p, 1).reshape(p**2, 1)
-    self.x = torch.cat((all_a, all_b), dim=1)
+    all_a = torch.arange(p).repeat_interleave(p).reshape(p**2, 1) # token 1
+    all_b = torch.arange(p).repeat(p, 1).reshape(p**2, 1) # token 2
+    third_token = torch.ones((p**2, 1), dtype=torch.int64)*p # token 3
+    
+    self.x = torch.cat((all_a, all_b, third_token), dim=1)
 
     y_int = (torch.arange(p).unsqueeze(1) + torch.arange(p).unsqueeze(0)) % p
+    
     # assign noise to some labels
     num_noisy_labels = int(config.noise_frac * y_int.numel())
     noisy_indices = torch.randperm(y_int.numel())[:num_noisy_labels]
     random_labels = torch.randint(0, p, (num_noisy_labels,))
     y_int = y_int.flatten()
     y_int[noisy_indices] = random_labels
-      
-    y_int = y_int.reshape(p**2)
-    # one-hot encode the labels
-    self.y = F.one_hot(y_int, num_classes=p).float()
+
+    self.y_int = y_int.reshape(p**2)
+    self.y_one_hot = F.one_hot(self.y_int, num_classes=p+1).float()
 
   def __len__(self):
     return self.x.shape[0]
 
   def __getitem__(self, idx):
-    return self.x[idx], self.y[idx]
-    
-
+    return self.x[idx], self.y_int[idx], self.y_one_hot[idx]
 
 
 def get_mod_arithmetic_cp_dataloaders(

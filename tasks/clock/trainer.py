@@ -11,7 +11,7 @@ from dataclasses import asdict
 import functools
 
 import os
-from datasets.clock import get_dataloaders
+from tasks.clock.dataset import get_dataloaders
 import psutil
 import time
 import logging
@@ -39,10 +39,10 @@ def train_clock_model(c: TrainRunConfig):
     
     c.model_partial = functools.partial(c.model_class, **(c.model_params or {}))
     
-    if c.name is None:
+    if c.run_name is None:
       c.name = c.model_class.__name__
       
-    print(f"Training model {c.name} with {c.world_size} GPUs")
+    print(f"Training model {c.run_name} with {c.world_size} GPUs")
 
     torch.cuda.empty_cache()
 
@@ -128,7 +128,7 @@ def _train(c: TrainRunConfig):
   t = np.linspace(0, 1, c.n_checkpoints)
   checkpoint_steps = (a + (b - a) * (t**2)).astype(int)
   
-  eval_frequency = np.max((total_steps // c.n_eval, 1))
+  eval_frequency = np.max((total_steps // c.n_evals, 1))
   
   # Initialize model and wrap with DistributedDataParallel
   model = c.model_partial().to(device)
@@ -138,18 +138,18 @@ def _train(c: TrainRunConfig):
   else:
     training_model = model
 
-  if c.optimizer is not None:
-    optimizer = c.optimizer(model)
+  if c.get_optimizer is not None:
+    optimizer = c.get_optimizer(model)
   else:
     optimizer = torch.optim.AdamW(model.parameters(), lr=c.learning_rate, weight_decay=c.weight_decay)
     
-  criterion = c.loss_fn
+  criterion = c.criterion
 
   scaler = torch.amp.GradScaler(device=device.type)
 
   # Checkpoint directory
-  label = c.label or ""
-  checkpoint_dir = os.path.join(MODELS_DIR, c.name, (f"{c.experiment_group or ''}-{latent_dim}-i{c.dataset_config.img_size}-d{log_total_train_samples}-{label}"))
+  label = c.checkpoint_dir_name or ""
+  checkpoint_dir = os.path.join(MODELS_DIR, c.run_name, (f"{c.experiment_group or ''}-{latent_dim}-i{c.dataset_config.img_size}-d{log_total_train_samples}-{label}"))
   if is_primary:
     mkdir_empty(checkpoint_dir)
     if c.save_method == "state_dict":
@@ -172,8 +172,8 @@ def _train(c: TrainRunConfig):
     
     c.run['config'] = stringify_unsupported({
       "group": c.experiment_group,
-      "name": c.name,
-      "label": c.label,
+      "name": c.run_name,
+      "label": c.checkpoint_dir_name,
       "latent-dim": latent_dim,
       "data-config": asdict(c.data_config) if c.data_config is not None else {},
       "dataset-config": asdict(c.dataset_config) if c.dataset_config is not None else {},
@@ -184,7 +184,7 @@ def _train(c: TrainRunConfig):
       "weight-decay": c.weight_decay,
       "n-epochs": n_epochs,
       "batch-size": c.batch_size,
-      "loss-fn": c.loss_fn.__class__.__name__,
+      "loss-fn": c.criterion.__class__.__name__,
       "checkpoint-dir": checkpoint_dir,
     })
     
@@ -224,7 +224,7 @@ def _train(c: TrainRunConfig):
 
           if is_primary and (step % eval_frequency == 0):   
             # Evaluate the model
-            val_loss = eval_model(model=training_model.module if c.distributed else training_model, type_=c.type, latent_dim=latent_dim, loss_fn=c.loss_fn, val_data=val_data, device=device)
+            val_loss = eval_model(model=training_model.module if c.distributed else training_model, type_=c.type, latent_dim=latent_dim, loss_fn=c.criterion, val_data=val_data, device=device)
             if c.run is not None:
               c.run["train/val_loss"].append(
                 value=val_loss,

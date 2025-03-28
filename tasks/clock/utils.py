@@ -1,4 +1,4 @@
-from datasets.clock import ClockConfig, ClockDatasetConfig, get_dataloaders
+from tasks.clock.dataset import ClockConfig, ClockDatasetConfig, get_dataloaders
 
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
@@ -106,7 +106,7 @@ def eval_and_save_model(
     raise ValueError(f"Unknown save method {c.save_method}")
 
   # Evaluate the model test loss
-  val_loss = eval_model(model=model, type_=c.type, latent_dim=latent_dim, loss_fn=c.loss_fn, val_data=val_data, device=device)
+  val_loss = eval_model(model=model, type_=c.type, latent_dim=latent_dim, loss_fn=c.criterion, val_data=val_data, device=device)
 
   return val_loss
 
