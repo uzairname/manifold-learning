@@ -116,6 +116,21 @@ class ClockGenerator:
         return clock_tensor.unsqueeze(0)  # Add channel dimension (1, H, W)
 
 
+<<<<<<< Updated upstream:tasks/clock/dataset.py
+=======
+@dataclass
+class ClockDatasetConfig:
+  device: int='cpu'
+  data_size: int=2**12
+  img_size: int=128
+  augment: dict=None
+  quantization_scheduler: typing.Callable[[int], int] = None
+  hand_width_scheduler: typing.Callable[[int], float] = None
+  initial_time: float= torch.sqrt( torch.tensor(2) ) - 1
+  noise_only: bool=False
+
+
+>>>>>>> Stashed changes:datasets/clock.py
 class ClockDataset(Dataset):
     def __init__(
       self, 
@@ -151,6 +166,13 @@ class ClockDataset(Dataset):
     def __getitem__(self, idx):
       if self.config.noise_only:
           return torch.randn((1, self.config.img_size, self.config.img_size)), torch.randn((1, self.config.img_size, self.config.img_size)), torch.randn(2), torch.randn(1)
+<<<<<<< Updated upstream:tasks/clock/dataset.py
+=======
+      
+      # Get time of day as a fraction of 1
+      hashed = (idx * 2654435761) & 0xFFFFFFFF
+      time_of_day = torch.tensor((hashed / 0xFFFFFFFF), dtype=torch.float32)  # in [0, 1)
+>>>>>>> Stashed changes:datasets/clock.py
       
       hashed = ((idx * 2654435761) + self.seed_offset) & 0xFFFFFFFF
       np.random.seed(hashed)
@@ -202,7 +224,12 @@ class ClockDataset(Dataset):
 
 
 def get_dataloaders(
+<<<<<<< Updated upstream:tasks/clock/dataset.py
   data_config: ClockDatasetConfig=ClockDatasetConfig(),
+=======
+  data_config: ClockConfig=ClockConfig(),
+  dataset_config: ClockDatasetConfig=ClockDatasetConfig(),
+>>>>>>> Stashed changes:datasets/clock.py
   val_size: int=None,
   batch_size: int=64,
   world_size: int=1,
@@ -213,6 +240,7 @@ def get_dataloaders(
   Get the clock dataset split into training and validation sets.
   """
   # Dataset
+<<<<<<< Updated upstream:tasks/clock/dataset.py
   train_dataset = ClockDataset(data_config=data_config)
   
   test_data_config = ClockDatasetConfig(
@@ -223,6 +251,14 @@ def get_dataloaders(
   test_dataset = ClockDataset(data_config=test_data_config)
 
   # Split into train and val
+=======
+  dataset = ClockDataset(dataset_config=dataset_config, clock_config=data_config)
+
+  # Split into train and val
+  if val_size is None:
+      val_size = np.min((dataset_config.data_size//8, 2**12))
+  train_dataset, val_dataset = torch.utils.data.random_split(dataset, [len(dataset) - val_size, val_size])
+>>>>>>> Stashed changes:datasets/clock.py
 
   # Get sampler and dataloader for train data
   if rank is not None:
@@ -237,8 +273,13 @@ def get_dataloaders(
   # increase num_workers if GPU is underutilized
 
   # Get sampler and dataloader for val data
+<<<<<<< Updated upstream:tasks/clock/dataset.py
   val_sampler = torch.utils.data.SequentialSampler(test_dataset)  # No need for shuffling
   val_dataloader = DataLoader(test_dataset, batch_size=batch_size, sampler=val_sampler, pin_memory=True, drop_last=True, num_workers=4, persistent_workers=True)
+=======
+  val_sampler = torch.utils.data.SequentialSampler(val_dataset)  # No need for shuffling
+  val_dataloader = DataLoader(val_dataset, batch_size=batch_size, sampler=val_sampler, pin_memory=True, drop_last=True, num_workers=4, persistent_workers=True)
+>>>>>>> Stashed changes:datasets/clock.py
 
   assert len(train_dataloader) > 0, f"Train dataloader is empty (batch_size={batch_size}, dataset size={len(train_dataset)}, world_size={world_size})"
   assert val_size == 0 or len(val_dataloader) > 0, "Validation dataloader is empty"

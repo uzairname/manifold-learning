@@ -62,11 +62,18 @@ def optimizer(model: nn.Module):
   
   return torch.optim.AdamW(
     [
+<<<<<<< Updated upstream
       {"params": encoder_params, "lr": 1e-4, "weight_decay": 1e-2},
       {"params": decoder_params, "lr": 1e-3, "weight_decay": 1e-4},
     ],
   )
 
+=======
+      {"params": encoder_params, "lr": 1e-3, "weight_decay": 1e-2},
+      {"params": decoder_params, "lr": 1e-2, "weight_decay": 1e-3},
+    ],
+  )
+>>>>>>> Stashed changes
 
 if __name__ == "__main__":
   
@@ -82,10 +89,16 @@ if __name__ == "__main__":
       config = TrainRunConfig(
         checkpoint_dir_name="test",
         model_class=cls,
+<<<<<<< Updated upstream
+=======
+        type="autoencoder",
+        latent_dim=2,
+>>>>>>> Stashed changes
         model_params=dict(
           latent_dim=2,
           img_size=img_size,
           encoder_args=dict(
+<<<<<<< Updated upstream
             channels=[64, 64],
             fc_dims=[32],
           ),
@@ -118,3 +131,29 @@ if __name__ == "__main__":
       )
       
       trainer.train(config)
+=======
+            n_conv_blocks=2,
+            channels=[1, 32, 64],
+            fc_dims=[256, 128],
+          ),
+          decoder_args=dict(
+            fc_size=256,
+            resnet_start_channels=128,
+          ),
+        ),
+        data_config=ClockConfig(),
+        dataset_config=ClockDatasetConfig(
+          data_size=2**24,
+          img_size=64,
+          augment=dict(
+            noise_std=0.01,
+          ),
+        ),
+        batch_size=256,
+        optimizer=optimizer,
+        loss_fn=nn.SmoothL1Loss(),
+        n_checkpoints=16,
+    )
+  
+    train_clock_model(config)
+>>>>>>> Stashed changes

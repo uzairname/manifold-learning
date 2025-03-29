@@ -49,7 +49,7 @@ class Attention(nn.Module):
     qkv = t.einsum('bsd,ndh -> bnsh', x, self.W_qkv) # batch, n_heads, seq_len, head_dim * 3
     q, k, v = t.chunk(qkv, 3, dim=-1) # batch, n_heads, seq_len, head_dim
     attn = t.einsum('bnqh,bnkh -> bnqk', q, k) / np.sqrt(self.head_dim) # batch, n_heads, seq_len_q, seq_len_k
-    attn = attn + self.mask[:attn.shape[-2], :attn.shape[-2]]
+    attn = attn + self.mask[:attn.shape[-2], :attn.shape[-1]]
     attn = F.softmax(attn, dim=-1)
     
     out = t.einsum('bnqk,bnkh -> bnqh', attn, v) # batch, n_heads, seq_len_q, head_dim
@@ -60,16 +60,14 @@ class Attention(nn.Module):
 
 
 class MLP(nn.Module):
-  def __init__(self, d_model, hidden_dim, init_scale=1):
+  def __init__(self, d_model, hidden_dim, init_scale):
     super().__init__()
-    self.W1 = nn.Parameter(t.randn(d_model, hidden_dim) / np.sqrt(d_model) * init_scale)
-    self.b1 = nn.Parameter(t.zeros(hidden_dim))
-    self.W2 = nn.Parameter(t.randn(hidden_dim, d_model) / np.sqrt(d_model) * init_scale)
-    self.b2 = nn.Parameter(t.zeros(d_model))
-    
-  def forward(self, x: t.Tensor):
-    x = F.relu(x @ self.W1 + self.b1)
-    x = x @ self.W2 + self.b2
+    self.fc1 = nn.Linear(d_model, hidden_dim)
+    self.fc2 = nn.Linear(hidden_dim, d_model)
+  
+  def forward(self, x):
+    x = F.relu(self.fc1(x))
+    x = self.fc2(x)
     return x
 
 

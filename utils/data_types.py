@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 
 @dataclass
-class TrainRunConfig:
+class   TrainRunConfig:
 
   # model
   model_class: nn.Module

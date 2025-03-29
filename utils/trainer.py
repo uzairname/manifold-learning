@@ -266,10 +266,10 @@ class Trainer(ABC):
 
     # Evaluate the model
     if s.eval_frequency and (s.step % s.eval_frequency == 0):
-      val_loss = self.eval_model(c, s)
+      s.val_loss = self.eval_model(c, s)
       if self.run is not None:
         self.run["train/val_loss"].append(
-          value=val_loss,
+          value=s.val_loss,
           step=s.step
         )
 
