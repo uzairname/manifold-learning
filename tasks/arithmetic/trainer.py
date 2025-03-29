@@ -87,7 +87,7 @@ def _train(c: TrainRunConfig):
   else:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
  
-  
+  torch.manual_seed(42 + 9)  
 
   # Get dataloaders
   train_dataloader, val_dataloader, train_sampler = get_mod_arithmetic_cp_dataloaders(
@@ -165,7 +165,7 @@ def _train(c: TrainRunConfig):
     
   logging.info(f"total steps {total_steps}")
   logging.info(f"~{approx_unique_samples} samples, {c.n_epochs} epochs")
-
+  
 
   val_loss = None
   checkpoint_num = 0
@@ -215,7 +215,7 @@ def _train(c: TrainRunConfig):
             checkpoint_num += 1
 
           # Optimization step
-          x, y, _ = batch
+          x, y = batch
           x = x.to(device)
           y = y.to(device)
               
@@ -224,17 +224,19 @@ def _train(c: TrainRunConfig):
             pred = training_model(x)
             loss = criterion(pred, y)
 
+          # Average loss across all GPUs for logging
           loss_tensor = loss.clone().detach()
           if c.distributed:
             dist.all_reduce(loss_tensor, op=dist.ReduceOp.AVG)
           running_loss += loss_tensor.item()
-
+          
           scaler.scale(loss).backward()
           scaler.unscale_(optimizer)
-          
+
+          # Log gradient norms
           if is_primary and (step % 16 == 0):
             log_norms(run=c.run, model=training_model, step=step)
-
+              
           torch.nn.utils.clip_grad_norm_(training_model.parameters(), 0.2)
           scaler.step(optimizer)
           scaler.update()
@@ -243,17 +245,13 @@ def _train(c: TrainRunConfig):
           if is_primary:
             t.update(1) 
 
-  # Evaluate and save final loss
+  time_taken = time.time() - start_time
+
+  if c.run is not None:
+    c.run['summary/time_taken'] = time_taken
+  # Evaluate and save final loss              
   if is_primary:
       val_loss = eval_and_save_model(c, training_model.module if c.distributed else training_model, device, os.path.join(checkpoint_dir, "final.pt"), val_data)
-      with open(os.path.join(checkpoint_dir, f"{checkpoint_num}.json"), "w") as f:
-              json.dump({
-                "step": step,
-                "epoch": epoch,
-                "batch": i,
-                "val_loss": val_loss,
-              }, f, indent=4)
-
       if c.run is not None:
         c.run['summary/val_loss'] = val_loss
 

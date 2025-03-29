@@ -42,7 +42,7 @@ def eval_model(
   val_loss = 0
   with torch.no_grad():
     for batch in val_data:
-        x, y, _ = batch
+        x, y = batch
         x = x.to(device)
         y = y.to(device)
         

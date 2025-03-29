@@ -1,10 +1,10 @@
-from tasks.clock.dataset import ClockConfig, ClockDatasetConfig
+from datasets.clock import ClockConfig, ClockDatasetConfig
 from models.decoders import ActivationType, ImplicitNeuralDecoder,  ResNetDecoder3, ResNetDecoder4
+from clock import train_clock_model
 import numpy as np
 import torch.nn as nn
 
-from tasks.clock import train_clock_model
-from tasks.clock.utils import TrainRunConfig
+from clock.utils import TrainRunConfig
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ class ModArithmeticCpDataset(Dataset):
     all_b = torch.arange(p).repeat(p, 1).reshape(p**2, 1) # token 2
     third_token = torch.ones((p**2, 1), dtype=torch.int64)*p # token 3
     
-    self.x = torch.cat((all_a, all_b, third_token), dim=1)
+    self.x = torch.cat((all_a, all_b), dim=1)
 
     y_int = (torch.arange(p).unsqueeze(1) + torch.arange(p).unsqueeze(0)) % p
     
@@ -52,13 +52,13 @@ class ModArithmeticCpDataset(Dataset):
     y_int[noisy_indices] = random_labels
 
     self.y_int = y_int.reshape(p**2)
-    self.y_one_hot = F.one_hot(self.y_int, num_classes=p+1).float()
+    self.y_one_hot = F.one_hot(self.y_int, num_classes=p).float()
 
   def __len__(self):
     return self.x.shape[0]
 
   def __getitem__(self, idx):
-    return self.x[idx], self.y_int[idx], self.y_one_hot[idx]
+    return self.x[idx], self.y_int[idx]
 
 
 def get_mod_arithmetic_cp_dataloaders(

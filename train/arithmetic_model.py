@@ -42,8 +42,9 @@ if __name__ == "__main__":
         batch_size=512,
         learning_rate=1e-3,
         weight_decay=1e-0,
-        criterion=loss_fn,
+        criterion=nn.CrossEntropyLoss(),
         n_evals=128,
         n_checkpoints=32,
+        max_gpus=4,
       )
       train_arithmetic_model(config)
