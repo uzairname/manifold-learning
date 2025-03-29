@@ -72,6 +72,9 @@ def get_mod_arithmetic_cp_dataloaders(
     """
     dataset = ModArithmeticCpDataset(config=data_config)
     
+    g = torch.Generator()
+    g.manual_seed(42)
+    
     # Datasets
     train_dataset = dataset
     val_dataset = None
@@ -79,7 +82,7 @@ def get_mod_arithmetic_cp_dataloaders(
         val_size = int(len(dataset) * val_frac)
         if val_size > 0:
           train_size = len(dataset) - val_size
-          train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+          train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=g)
           val_sampler = RandomSampler(val_dataset)
        
     # Distributed sampler if applicable 
