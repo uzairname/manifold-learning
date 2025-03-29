@@ -14,7 +14,7 @@ IMG_SIZE = 128
 
 
 @dataclass
-class ClockConfig:
+class ClockDatasetConfig:
     minute_hand_start: float = 0.5
     minute_hand_end: int = 1
     minute_hand_width: float = 0.1
@@ -22,10 +22,20 @@ class ClockConfig:
     hour_hand_end: int = 0.5
     hour_hand_width: float = 0.1
     angle_quantization: int = None
+      
+    device: int='cpu'
+    data_size: int=2**12
+    img_size: int=128
+    augment: dict=None
+    # quantization_scheduler: typing.Callable[[int], int] = None
+    # hand_width_scheduler: typing.Callable[[int], float] = None
+    noise_only: bool=False
+    invert_prob: float=0
+    test: bool=False  
 
 
 class ClockGenerator:
-    def __init__(self, img_size=IMG_SIZE, device='cuda', config: ClockConfig = None):
+    def __init__(self, img_size=IMG_SIZE, device='cuda', config: ClockDatasetConfig = None):
         """
         Initializes the clock generator with a coordinate grid to optimize clock image generation.
         """
@@ -33,7 +43,7 @@ class ClockGenerator:
         self.device = device
         
         if config is None:
-            self.config = ClockConfig()
+            self.config = ClockDatasetConfig()
         else: 
             self.config = config
 
@@ -106,24 +116,10 @@ class ClockGenerator:
         return clock_tensor.unsqueeze(0)  # Add channel dimension (1, H, W)
 
 
-@dataclass
-class ClockDatasetConfig:
-  device: int='cpu'
-  data_size: int=2**12
-  img_size: int=128
-  augment: dict=None
-  # quantization_scheduler: typing.Callable[[int], int] = None
-  # hand_width_scheduler: typing.Callable[[int], float] = None
-  noise_only: bool=False
-  invert_prob: float=0
-  test: bool=False  
-
-
 class ClockDataset(Dataset):
     def __init__(
       self, 
-      dataset_config: ClockDatasetConfig = ClockDatasetConfig(),
-      clock_config: ClockConfig = ClockConfig(),
+      data_config: ClockDatasetConfig = ClockDatasetConfig(),
     ):
         """
         Args:
@@ -133,7 +129,7 @@ class ClockDataset(Dataset):
             translate_px (int): Maximum translation (in pixels).
             augment (bool): Whether to apply augmentation.
         """
-        self.config = dataset_config
+        self.config = data_config
 
         if self.config.augment is not None:
             self.noise_std = self.config.augment.get('noise_std', 0.0)
@@ -144,7 +140,7 @@ class ClockDataset(Dataset):
             True: 0xA5A5A5A5,  # Arbitrary large offset
         }[self.config.test]
 
-        self.generator = ClockGenerator(img_size=self.config.img_size, device=self.config.device, config=clock_config)
+        self.generator = ClockGenerator(img_size=self.config.img_size, device=self.config.device, config=data_config)
 
     def __len__(self):
         return self.config.data_size
@@ -206,8 +202,7 @@ class ClockDataset(Dataset):
 
 
 def get_dataloaders(
-  data_config: ClockConfig=ClockConfig(),
-  dataset_config: ClockDatasetConfig=ClockDatasetConfig(),
+  data_config: ClockDatasetConfig=ClockDatasetConfig(),
   val_size: int=None,
   batch_size: int=64,
   world_size: int=1,
@@ -218,14 +213,14 @@ def get_dataloaders(
   Get the clock dataset split into training and validation sets.
   """
   # Dataset
-  train_dataset = ClockDataset(dataset_config=dataset_config, clock_config=data_config)
+  train_dataset = ClockDataset(data_config=data_config)
   
-  test_dataset_config = ClockDatasetConfig(
-      img_size=dataset_config.img_size,
+  test_data_config = ClockDatasetConfig(
+      img_size=data_config.img_size,
       test=True,
       data_size=4096,
   )
-  test_dataset = ClockDataset(dataset_config=test_dataset_config, clock_config=data_config)
+  test_dataset = ClockDataset(data_config=test_data_config)
 
   # Split into train and val
 

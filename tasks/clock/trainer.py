@@ -8,7 +8,7 @@ import numpy as np
 
 import json
 from dataclasses import asdict
-import functools
+from functools import partial
 
 import os
 from tasks.clock.dataset import get_dataloaders
@@ -34,15 +34,15 @@ def train_clock_model(c: TrainRunConfig):
     c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
     c.distributed = c.world_size > 1
     
-    if c.dataset_config.img_size is not None:
-      c.model_params['img_size'] = c.dataset_config.img_size
+    if c.data_config.img_size is not None:
+      c.model_params['img_size'] = c.data_config.img_size
     
-    c.model_partial = functools.partial(c.model_class, **(c.model_params or {}))
+    c.model_partial = partial(c.model_class, **(c.model_params or {}))
     
-    if c.run_name is None:
+    if c.model_name is None:
       c.name = c.model_class.__name__
       
-    print(f"Training model {c.run_name} with {c.world_size} GPUs")
+    print(f"Training model {c.model_name} with {c.world_size} GPUs")
 
     torch.cuda.empty_cache()
 
@@ -96,7 +96,7 @@ def _train(c: TrainRunConfig):
   # Get dataloaders
   train_dataloader, val_dataloader, train_sampler, _ = get_dataloaders(
       data_config=c.data_config,
-      dataset_config=c.dataset_config,
+      data_config=c.dataset_config,
       val_size=c.val_size,
       batch_size=c.batch_size,
       world_size=c.world_size,
@@ -149,7 +149,7 @@ def _train(c: TrainRunConfig):
 
   # Checkpoint directory
   label = c.checkpoint_dir_name or ""
-  checkpoint_dir = os.path.join(MODELS_DIR, c.run_name, (f"{c.experiment_group or ''}-{latent_dim}-i{c.dataset_config.img_size}-d{log_total_train_samples}-{label}"))
+  checkpoint_dir = os.path.join(MODELS_DIR, c.model_name, (f"{c.experiment_group or ''}-{latent_dim}-i{c.dataset_config.img_size}-d{log_total_train_samples}-{label}"))
   if is_primary:
     mkdir_empty(checkpoint_dir)
     if c.save_method == "state_dict":
@@ -172,7 +172,7 @@ def _train(c: TrainRunConfig):
     
     c.run['config'] = stringify_unsupported({
       "group": c.experiment_group,
-      "name": c.run_name,
+      "name": c.model_name,
       "label": c.checkpoint_dir_name,
       "latent-dim": latent_dim,
       "data-config": asdict(c.data_config) if c.data_config is not None else {},

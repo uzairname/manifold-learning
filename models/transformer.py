@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 
 
-class Embed(nn.Module):
+class Embedding(nn.Module):
   def __init__(self, n_vocab, d_model, init_scale=1):
       super().__init__()
       self.W_embed = nn.Parameter(t.randn(d_model, n_vocab)/np.sqrt(d_model)*init_scale)
@@ -13,15 +13,7 @@ class Embed(nn.Module):
     return t.einsum('dbp -> bpd', self.W_embed[:, x])
 
 
-class Unembed(nn.Module):
-  def __init__(self, n_vocab, d_model, init_scale=1):
-    super().__init__()
-    self.W_ue = nn.Parameter(t.randn(d_model, n_vocab)/np.sqrt(d_model)*init_scale)
-  
-  def forward(self, x):
-    return x @ self.W_ue
-
-class PosEmbed(nn.Module):
+class PosEmbedding(nn.Module):
   def __init__(self, d_model, seq_len, init_scale=1):
     super().__init__()
     self.W_pos = nn.Parameter(t.randn(seq_len, d_model)/np.sqrt(d_model)*init_scale)
@@ -29,6 +21,15 @@ class PosEmbed(nn.Module):
   def forward(self, x):
     in_seq_len = x.shape[-2]
     return x + self.W_pos[:in_seq_len]
+    
+    
+class Unembed(nn.Module):
+  def __init__(self, n_vocab, d_model, init_scale=1):
+    super().__init__()
+    self.W_ue = nn.Parameter(t.randn(d_model, n_vocab)/np.sqrt(d_model)*init_scale)
+  
+  def forward(self, x):
+    return x @ self.W_ue
 
 
 class Attention(nn.Module):
@@ -99,8 +100,8 @@ class Transformer(nn.Module):
     
     self.use_ln = use_ln
     self.last_token = last_token
-    self.embedding = Embed(n_vocab=n_vocab, d_model=d_model, init_scale=init_scale)
-    self.pos_embedding = PosEmbed(d_model=d_model, seq_len=max_seq_len, init_scale=init_scale)
+    self.embedding = Embedding(n_vocab=n_vocab, d_model=d_model, init_scale=init_scale)
+    self.pos_embedding = PosEmbedding(d_model=d_model, seq_len=max_seq_len, init_scale=init_scale)
     
     self.transformer_blocks = nn.ModuleList([
       TransformerBlock(d_model=d_model, max_seq_len=max_seq_len, n_heads=n_heads, d_mlp=d_mlp, init_scale=init_scale, ln_eps=ln_eps, use_ln=use_ln)

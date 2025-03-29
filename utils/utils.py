@@ -2,18 +2,30 @@ import os, errno, math
 
 def silentremove(filename):
     try:
-        os.remove(filename)
+      os.remove(filename)
     except OSError as e: # this would be "except OSError, e:" before Python 2.6
-        if e.errno != errno.ENOENT: # errno.ENOENT = no such file or directory
-            raise # re-raise exception if a different error occurred
+      if e.errno != errno.ENOENT: # errno.ENOENT = no such file or directory
+        raise # re-raise exception if a different error occurred
+          
+          
+def clear_dir(directory):
+  """
+  Recursively clears the directory
+  """
+  for f in os.listdir(directory):
+    path = os.path.join(directory, f)
+    if os.path.isdir(path):
+      clear_dir(path)
+      os.rmdir(path)  # Remove the now-empty directory
+    else:
+      silentremove(path)
           
 def mkdir_empty(directory):
   """
   Ensures the directory exists and is empty
   """
   os.makedirs(directory, exist_ok=True)
-  for f in os.listdir(directory):
-    silentremove(os.path.join(directory, f))
+  clear_dir(directory)
 
 
 

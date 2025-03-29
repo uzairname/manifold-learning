@@ -1,4 +1,4 @@
-from tasks.clock.dataset import ClockConfig, ClockDatasetConfig, get_dataloaders
+from tasks.clock.dataset import ClockDatasetConfig, ClockDatasetConfig, get_dataloaders
 
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
@@ -15,25 +15,8 @@ import copy
 import neptune
 
 from utils.config import MODELS_DIR 
-from utils.train import BaseTrainRunConfig 
+from utils.data_types import TrainRunConfig 
 
-
-@dataclass
-class TrainRunConfig(BaseTrainRunConfig):
-  # model
-  type: typing.Literal["autoencoder", "encoder", "decoder"] = "autoencoder"
-
-  # data
-  dataset_config: ClockDatasetConfig = None
-  data_config: ClockConfig = None
-  val_size: int = None
-
-
-def copy_model(trained_model: nn.Module, init_model: typing.Callable[[], nn.Module], device: str) -> nn.Module:
-    model_copy = init_model()
-    model_copy.load_state_dict(trained_model.state_dict())
-    return model_copy.to(device)
-  
 
 def eval_model(
   model: nn.Module,
@@ -162,8 +145,7 @@ def load_model_and_dataset(
 
 
   dataloader, val_dataloader, _, _ = get_dataloaders(
-    data_config=ClockConfig(**data_config),
-    dataset_config=ClockDatasetConfig(**dataset_config),
+    data_config=ClockDatasetConfig(**data_config),
     batch_size=64,
   )
 

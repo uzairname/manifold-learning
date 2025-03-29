@@ -1,10 +1,10 @@
-from tasks.clock.dataset import ClockConfig, ClockDatasetConfig
+from tasks.clock.dataset import ClockDatasetConfig, ClockDatasetConfig
 from models.autoencoders import MLPResnetAutoencoder
 from tasks.clock.utils import TrainRunConfig
 from tasks.clock import train_clock_model
 import torch
 import torch.nn as nn
-import functools
+from functools import partial
 import numpy as np
 
 
@@ -46,7 +46,7 @@ if __name__ == "__main__":
             fc_size=512,
           ),
         ),
-        data_config=ClockConfig(
+        data_config=ClockDatasetConfig(
           hour_hand_width=0.2,
           minute_hand_width=0.2,
         ),
@@ -55,8 +55,8 @@ if __name__ == "__main__":
             noise_std=0.2
           ),
           data_size=2**22,
-          # quantization_scheduler=functools.partial(quantization_scheduler, alpha=alpha),
-          hand_width_scheduler=functools.partial(hand_width_scheduler, slope=1e5),
+          # quantization_scheduler=partial(quantization_scheduler, alpha=alpha),
+          hand_width_scheduler=partial(hand_width_scheduler, slope=1e5),
         ),
         batch_size=128,
         learning_rate=world_size*1e-3*accumulation_steps,

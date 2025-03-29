@@ -1,50 +1,35 @@
-import typing as t
-from dataclasses import dataclass
+from typing import Optional, List, Tuple, Any, Callable
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
 import numpy as np
 import random
-import neptune
 
-@dataclass
-class BaseTrainRunConfig:
 
-  # model
-  model_class: nn.Module
-  model_partial: t.Optional[t.Callable[[], nn.Module]] = None
-  model_params: t.Optional[dict] = None
 
-  # hyperparameters
-  n_epochs: int = 1
-  batch_size: int = 64
-  get_optimizer: t.Optional[t.Callable] = None
-  learning_rate: float = 1e-3
-  weight_decay: float = 0
-  criterion: nn.Module = nn.MSELoss()
-  accumulation_steps: int = 1
-  
-  # multiprocessing
-  max_gpus: int = None
-  rank: int = None
-  distributed: bool = True
-  world_size: int = None
-  
-  # checkpointing
-  n_evals: int = 64
-  n_checkpoints: int = 0
-  save_method: t.Literal["state_dict", "trace", "script"] = "state_dict"
-  checkpoint_dir_name: str = "checkpoints"
-  
-  # logging
-  run: t.Optional[neptune.Run] = None
-  log: bool = True
-  experiment_group: t.Optional[str] = None
-  run_name: t.Optional[str] = None
-  notes: t.Optional[str] = None
-  tags: t.Optional[list[str]] = None
+def eval_model(
+  model: nn.Module,
+  criterion: nn.Module,
+  val_data: List,
+  device: str,
+  get_inputs_labels: Callable[[Any], Tuple[torch.Tensor, torch.Tensor]]
+):
+  """
+  Evaluates a model from a training run.
+  """
+  model.eval()
+  val_loss = 0
+  with torch.no_grad():
+    for batch in val_data:
+        x, y = get_inputs_labels(batch)
+        x = x.to(device)
+        y = y.to(device)
+        pred = model(x) # take the last token prediction
+        loss = criterion(pred, y)
+        val_loss += loss.item()
+  return val_loss / len(val_data)
 
-  
+
 
 def set_all_seeds(seed: int = 42):
     random.seed(seed)
@@ -67,7 +52,6 @@ class CrossEntropyHighPrecision(nn.Module):
     prediction_logprobs = torch.gather(logprobs, index=labels[:, None], dim=-1)
     loss = -torch.mean(prediction_logprobs)
     return loss
-
 
 
 class HookPoint(nn.Module):
@@ -115,3 +99,10 @@ class HookPoint(nn.Module):
     
     def forward(self, x):
         return x
+
+
+def copy_model(trained_model: nn.Module, init_model: Callable[[], nn.Module], device: str) -> nn.Module:
+    model_copy = init_model()
+    model_copy.load_state_dict(trained_model.state_dict())
+    return model_copy.to(device)
+

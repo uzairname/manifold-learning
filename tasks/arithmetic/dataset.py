@@ -34,8 +34,6 @@ class ModArithmeticCpDataset(Dataset):
     assert is_prime(p), f"p={p} is not prime"
     self.p = p
     
-    
-    
     # Generate data
     all_a = torch.arange(p).repeat_interleave(p).reshape(p**2, 1) # token 1
     all_b = torch.arange(p).repeat(p, 1).reshape(p**2, 1) # token 2
@@ -64,7 +62,7 @@ class ModArithmeticCpDataset(Dataset):
 
 def get_mod_arithmetic_cp_dataloaders(
   data_config: ArithmeticDatasetConfig,
-  batch_size: int = 32,
+  batch_size: int = 64,
   world_size: int= 1,
   rank: int = None,
   val_frac: int = None
@@ -95,6 +93,6 @@ def get_mod_arithmetic_cp_dataloaders(
     val_dataloader = None
     if val_dataset is not None:
         val_dataloader = DataLoader(val_dataset, batch_size=batch_size, sampler=val_sampler, pin_memory=True, drop_last=False, num_workers=4, persistent_workers=True)
-        
+
     return train_dataloader, val_dataloader, train_sampler
 

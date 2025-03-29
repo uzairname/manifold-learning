@@ -1,4 +1,4 @@
-from tasks.clock.dataset import ClockConfig, ClockDatasetConfig
+from tasks.clock.dataset import ClockDatasetConfig, ClockDatasetConfig
 from models.decoders import ActivationType, ImplicitNeuralDecoder,  ResNetDecoder3, ResNetDecoder4
 import numpy as np
 import torch.nn as nn
@@ -21,7 +21,7 @@ if __name__ == "__main__":
           fc_size=fc_size,
           resnet_start_channels=resnet_start_channels,
         ),
-        data_config=ClockConfig(
+        data_config=ClockDatasetConfig(
           minute_hand_start=0.5,
           minute_hand_end=1,
           minute_hand_width=0.2,

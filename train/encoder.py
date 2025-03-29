@@ -1,4 +1,4 @@
-from tasks.clock.dataset import ClockConfig, ClockDatasetConfig
+from tasks.clock.dataset import ClockDatasetConfig, ClockDatasetConfig
 from models.encoders import ConvMLPEncoder, MLPEncoder
 from tasks.clock.utils import TrainRunConfig
 from tasks.clock.utils import TrainRunConfig
@@ -26,7 +26,7 @@ if __name__ == "__main__":
                   fc_dims=[512, 256, 128, 64],
                   sigmoid=True
                 ),
-                data_config=ClockConfig(),
+                data_config=ClockDatasetConfig(),
                 batch_size=128,
                 n_epochs=total_samples//data_size,
                 learning_rate=learning_rate,

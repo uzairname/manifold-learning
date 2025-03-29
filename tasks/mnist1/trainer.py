@@ -6,7 +6,7 @@ import torch.multiprocessing as mp
 import numpy as np
 
 import json
-import functools
+from functools import partial
 
 import os
 import psutil
@@ -30,7 +30,7 @@ def train_mnist_model(c: TrainRunConfig):
   
     c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
     c.distributed = c.world_size > 1
-    c.model_partial = functools.partial(c.model_class, **(c.model_params or {}))
+    c.model_partial = partial(c.model_class, **(c.model_params or {}))
     
     if c.name is None:
       c.name = c.model_class.__name__
