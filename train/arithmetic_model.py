@@ -41,7 +41,7 @@ class ArithmeticTrainer(Trainer):
   
   def get_inputs_labels(self, batch, s, c):
     x, y_int, y_one_hot = batch
-    return x, y_one_hot
+    return x, y_int
   
 
 if __name__ == "__main__":
@@ -49,43 +49,38 @@ if __name__ == "__main__":
   p = 113
   d_model=128
 
-  for init_scale in [1]:
-    batch_size = 512
-    weight_decay = 1e-0
-    use_ln = False
+  use_ln = False
 
-    config = TrainRunConfig(
-      model_name=f"arithmetic_transformer",
-      model_class=Transformer,
-      model_params=dict(
-        d_model=d_model,
-        d_mlp=d_model * 4,
-        n_vocab=p+1,
-        max_seq_len=3,
-        n_heads=4,
-        n_layers=1,
-        init_scale=init_scale,
-        use_ln=use_ln,
-      ),
-      data_config=ArithmeticDatasetConfig(
-        p=p,
-        noise_frac=0.0,
-      ),
-      n_epochs=20000,
-      batch_size=batch_size,
-      learning_rate=1e-3,
-      weight_decay=weight_decay,
-      criterion=nn.CrossEntropyLoss(),
-      n_evals=128,
-      n_checkpoints=32,
-      notes="nn.Linear",
-      experiment_group="trainer",
-    )
-    
-    trainer = ArithmeticTrainer(
-      val_frac=0.7
-    )
-    
-    trainer.train(config)
-
+  config = TrainRunConfig(
+    model_name=f"arithmetic_transformer",
+    model_class=Transformer,
+    model_params=dict(
+      d_model=d_model,
+      d_mlp=d_model * 4,
+      n_vocab=p+1,
+      max_seq_len=3,
+      n_heads=4,
+      n_layers=1,
+      init_scale=1.0,
+      use_ln=use_ln,
+    ),
+    data_config=ArithmeticDatasetConfig(
+      p=p,
+      noise_frac=0.0,
+    ),
+    batch_size=512,
+    learning_rate=1e-3,
+    weight_decay=1e-0,
+    n_epochs=20000,
+    criterion=CrossEntropyHighPrecision(),
+    n_evals=128,
+    n_checkpoints=32,
+    experiment_group="trainer",
+  )
+  
+  trainer = ArithmeticTrainer(
+    val_frac=0.7
+  )
+  
+  trainer.train(config)
 
