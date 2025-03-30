@@ -182,3 +182,4 @@ wandb
 core.*
 .neptune
 .vscode
+condaenv.*

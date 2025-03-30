@@ -1,7 +1,7 @@
 from tasks.clock.dataset import ClockDatasetConfig, ClockDatasetConfig
 from models.encoders import ConvMLPEncoder, MLPEncoder
-from tasks.clock.utils import TrainRunConfig
-from tasks.clock.utils import TrainRunConfig
+from tasks.clock.utils import BaseTrainRunConfig
+from tasks.clock.utils import BaseTrainRunConfig
 from tasks.clock import train_clock_model
 import numpy as np
 
@@ -14,7 +14,7 @@ if __name__ == "__main__":
         for data_size in [2**10]:
           for weight_decay in [1e-1]:
 
-            config = TrainRunConfig(
+            config = BaseTrainRunConfig(
                 dataset_config=ClockDatasetConfig(
                   data_size=data_size,
                   img_size=64,
@@ -42,7 +42,7 @@ if __name__ == "__main__":
         for noise_std, blur in [[0.001, 0], [0.05, 2], [0.01, 4]]:
           data_size = total_samples
 
-          config = TrainRunConfig(
+          config = BaseTrainRunConfig(
               dataset_config=ClockDatasetConfig(
                 data_size=data_size,
                 img_size=64,

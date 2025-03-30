@@ -1,1 +1,8 @@
-Training an autoencoder on images of clocks with little inductive bias. Seeing if it learns interpretable representations of the data.
+Create conda environment
+
+```bash
+conda env create -f environment.yml
+conda activate ml_env
+```
+
+experiments in grokking, manifold learning, and interpretability

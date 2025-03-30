@@ -1,5 +1,5 @@
 from abc import abstractmethod, ABC
-import typing
+from typing import Tuple, Generic, TypeVar, List
 from dataclasses import asdict
 from functools import partial
 import json
@@ -18,27 +18,31 @@ from neptune.utils import stringify_unsupported
 from tqdm import tqdm
 
 from utils.config import MODELS_DIR
-from utils.data_types import TrainRunState, TrainRunConfig
+from utils.data_types import TrainRunState, BaseTrainRunConfig
 from utils.multiprocessing import process_group_cleanup, process_group_setup
 from utils.helpers import eval_model, set_all_seeds, copy_model
 from utils.logging import setup_logging
 from utils.utils import mkdir_empty
 
+TrainRunConfig = TypeVar('TrainRunConfig', bound=BaseTrainRunConfig)
 
-class Trainer(ABC):
+class Trainer(ABC, Generic[TrainRunConfig]):
   '''
   Class for doing training runs
   '''
   
-  def __init__(self):
+  def __init__(self, c: TrainRunConfig):
+    self.c = c
     self.run: neptune.Run = None
   
-  def train(self, c: TrainRunConfig):
-    torch.cuda.empty_cache()
+  def train(self):
+    c = self.c
+
     set_all_seeds()
+    torch.cuda.empty_cache()
     torch.autograd.set_detect_anomaly(True)
     self.run = None
-
+    
     # Determine the world size based on config and gpus available
     c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
     c.distributed = c.world_size > 1
@@ -76,7 +80,7 @@ class Trainer(ABC):
       process_group_cleanup()
 
   @abstractmethod
-  def get_data(self, c: TrainRunConfig, rank=None, get_val_data=True) -> typing.Tuple[torch.utils.data.DataLoader, typing.List, torch.utils.data.Sampler]:
+  def get_data(self, c: TrainRunConfig, rank=None, get_val_data=True) -> Tuple[torch.utils.data.DataLoader, List, torch.utils.data.Sampler]:
     '''
     Get the training and validation data
     Returns a tuple of:
@@ -93,7 +97,7 @@ class Trainer(ABC):
     self,
     batch: torch.Tensor,
     s: TrainRunState,
-    c: TrainRunConfig,
+    c: TrainRunConfig
   ) -> torch.Tensor:
     '''
     Get the input and labels for the model.

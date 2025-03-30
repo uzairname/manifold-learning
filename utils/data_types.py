@@ -10,13 +10,13 @@ from tqdm import tqdm
 
 
 @dataclass
-class   TrainRunConfig:
+class BaseTrainRunConfig:
 
   # model
   model_class: nn.Module
   model_partial: Optional[Callable[[], nn.Module]] = None
   model_params: Optional[dict] = None
-
+ 
   # hyperparameters
   n_epochs: int = 1
   batch_size: int = 64

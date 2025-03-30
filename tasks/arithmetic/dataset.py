@@ -65,7 +65,7 @@ def get_mod_arithmetic_cp_dataloaders(
   batch_size: int = 64,
   world_size: int= 1,
   rank: int = None,
-  val_frac: int = None
+  val_frac: int = None,
 ):
     """
     Get a dataset of modular arithmetic on C_p

@@ -7,7 +7,7 @@ import os
 import json
 
 from tasks.arithmetic.dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
-from utils.data_types import TrainRunConfig
+from utils.data_types import BaseTrainRunConfig
 
 
   

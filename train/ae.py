@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from functools import partial
 
-from utils.data_types import TrainRunConfig
+from utils.data_types import BaseTrainRunConfig
 from utils.trainer import Trainer
 
 
@@ -86,7 +86,7 @@ if __name__ == "__main__":
       data_size=total_samples
       img_size = 64
 
-      config = TrainRunConfig(
+      config = BaseTrainRunConfig(
         checkpoint_dir_name="test",
         model_class=cls,
 <<<<<<< Updated upstream

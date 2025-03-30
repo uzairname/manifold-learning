@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn as nn
 
 from tasks.clock import train_clock_model
-from tasks.clock.utils import TrainRunConfig
+from tasks.clock.utils import BaseTrainRunConfig
 
 
 if __name__ == "__main__":
@@ -13,7 +13,7 @@ if __name__ == "__main__":
       data_size=total_samples # for infinite data, 1 epoch
       batch_size = 512
 
-      config = TrainRunConfig(
+      config = BaseTrainRunConfig(
         type="decoder",
         model_class=ResNetDecoder3,
         model_params=dict(

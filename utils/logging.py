@@ -3,7 +3,6 @@ import logging
 import numpy as np
 import torch
 import torch.nn as nn
-from wandb.wandb_run import Run
 import neptune
 
 from utils.data_types import TrainRunState

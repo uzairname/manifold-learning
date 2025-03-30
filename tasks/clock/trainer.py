@@ -18,7 +18,7 @@ import logging
 from tqdm import tqdm
 
 from utils.config import MODELS_DIR
-from clock.utils import TrainRunConfig, eval_and_save_model, eval_model
+from clock.utils import BaseTrainRunConfig, eval_and_save_model, eval_model
 from utils.logging import setup_logging
 from utils.logging import log_norms
 from utils.utils import mkdir_empty
@@ -29,7 +29,7 @@ from neptune.utils import stringify_unsupported
 
 DATASET_NAME = "clock"
 
-def train_clock_model(c: TrainRunConfig):
+def train_clock_model(c: BaseTrainRunConfig):
 
     c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
     c.distributed = c.world_size > 1
@@ -64,7 +64,7 @@ def train_clock_model(c: TrainRunConfig):
     print('Done training')
 
 
-def train_process(rank, c: TrainRunConfig):
+def train_process(rank, c: BaseTrainRunConfig):
   try:
     c.rank = rank
     process_group_setup(rank, c.world_size)
@@ -80,7 +80,7 @@ def train_process(rank, c: TrainRunConfig):
   
 
 
-def _train(c: TrainRunConfig):
+def _train(c: BaseTrainRunConfig):
   
   is_primary = c.rank == 0 or not c.distributed
   latent_dim = c.model_params['latent_dim']   
