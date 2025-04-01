@@ -1,17 +1,15 @@
 from typing import *
 from dataclasses import dataclass
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 import os
 import json
 
-from tasks.arithmetic.dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
-from utils.data_types import BaseTrainRunConfig
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+
+from .dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
 
 
-  
-  
 @dataclass
 class ModelCheckpoint:
   model: nn.Module
@@ -20,10 +18,9 @@ class ModelCheckpoint:
   step: Optional[int] = None
   epoch: Optional[int] = None
   val_loss: Optional[float] = None
-  
 
 
-def load_model_and_dataset(
+def load_model_checkpoint(
   model_class: nn.Module,
   model_dir: str,
   checkpoint=None,
@@ -75,3 +72,9 @@ def load_model_and_dataset(
     val_loss=val_loss,
     step=step,
   )
+  
+  
+__all__ = [
+  "ModelCheckpoint",
+  "load_model_checkpoint",
+]

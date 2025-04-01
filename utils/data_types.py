@@ -1,4 +1,4 @@
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Literal, Optional, TypeVar
 from dataclasses import dataclass
 
 import torch.nn as nn
@@ -8,9 +8,11 @@ import neptune
 
 from tqdm import tqdm
 
+from utils.config import MODELS_DIR
+
 
 @dataclass
-class BaseTrainRunConfig:
+class TrainConfig:
 
   # model
   model_class: nn.Module
@@ -35,10 +37,11 @@ class BaseTrainRunConfig:
   world_size: int = None
 
   # checkpointing
+  checkpoint_base_dir: str = MODELS_DIR
   n_evals: int = 64
   n_checkpoints: int = 0
   save_method: Literal["state_dict", "trace", "script"] = "state_dict"
-  checkpoint_dir_name: str = "checkpoints"
+  checkpoint_dir: str = "checkpoints"
 
   # logging
   log: bool = True
@@ -46,6 +49,9 @@ class BaseTrainRunConfig:
   model_name: Optional[str] = None
   notes: Optional[str] = None
   tags: Optional[list[str]] = None
+  
+  
+TC = TypeVar('TrainConfig', bound=TrainConfig, default=TrainConfig, covariant=True)
 
 
 @dataclass

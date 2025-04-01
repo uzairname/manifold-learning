@@ -38,13 +38,9 @@ def visualize_data(dataloader: DataLoader):
   plt.tight_layout()
   plt.show()
   
-  
-  
-  
-def map_inputs(dataloader: DataLoader, model: nn.Module, fn, limit=None):
-  
-  count = 0
-  
-  with torch.no_grad():
-    for x, y in dataloader:
-      3
+
+
+
+__all__ = [
+  "visualize_data"
+]

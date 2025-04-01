@@ -1,6 +1,6 @@
 from tasks.clock.dataset import ClockDatasetConfig, ClockDatasetConfig
 from models.autoencoders import MLPResnetAutoencoder
-from tasks.clock.utils import BaseTrainRunConfig
+from tasks.clock.utils import TrainConfig
 from tasks.clock import train_clock_model
 import torch
 import torch.nn as nn
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     accumulation_steps = 1
     alpha=16
     
-    config = BaseTrainRunConfig(
+    config = TrainConfig(
         model_class=cls,
         name=f"MLPResnetAutoencoder-handwidth",
         type="autoencoder",

@@ -13,7 +13,7 @@
 echo "Runnning script"
 cd /mnt/ffs24/home/moham147/experiments/manifold-learning
 source .venv/bin/activate
-python train/arithmetic_model.py
+python train/arithmetic_model0.py
 
 # Print resource information
 scontrol show job $SLURM_JOB_ID

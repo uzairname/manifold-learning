@@ -15,7 +15,7 @@ import copy
 import neptune
 
 from utils.config import MODELS_DIR 
-from utils.data_types import BaseTrainRunConfig 
+from utils.data_types import TrainConfig 
 
 
 def eval_model(
@@ -61,7 +61,7 @@ def eval_model(
 
 
 def eval_and_save_model(
-  c: BaseTrainRunConfig,
+  c: TrainConfig,
   model: nn.Module,
   device: str,
   path: str,
