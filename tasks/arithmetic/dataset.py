@@ -63,10 +63,12 @@ class ModArithmeticCpDataset(Dataset):
 
 def get_mod_arithmetic_cp_dataloaders(
   data_config: ArithmeticDatasetConfig,
+  train_frac: int = 1,
+  max_val_size: int = 2**16,
   batch_size: int = 64,
   world_size: int= 1,
   rank: int = None,
-  val_frac: int = None,
+  drop_last: bool = False,
 ):
     """
     Get a dataset of modular arithmetic on C_p
@@ -75,17 +77,16 @@ def get_mod_arithmetic_cp_dataloaders(
     
     g = torch.Generator()
     g.manual_seed(42)
-    
-    # Datasets
-    train_dataset = dataset
-    val_dataset = None
-    if val_frac is not None:
-        val_size = int(len(dataset) * val_frac)
-        if val_size > 0:
-          train_size = len(dataset) - val_size
-          train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=g)
-          val_sampler = RandomSampler(val_dataset)
-       
+
+    train_size = int(len(dataset) * train_frac)
+    test_size = int(min(len(dataset) - train_size, max_val_size))
+
+    train_dataset, val_dataset, _  = random_split(
+      dataset,
+      [train_size, test_size, len(dataset) - train_size - test_size],
+      generator=g
+    )
+
     # Distributed sampler if applicable 
     if world_size > 1:
         train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
@@ -93,12 +94,12 @@ def get_mod_arithmetic_cp_dataloaders(
         train_sampler = RandomSampler(train_dataset)
       
     # Dataloaders
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler, pin_memory=True, drop_last=False, num_workers=4, persistent_workers=True)
-    val_dataloader = None
-    if val_dataset is not None:
-        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, sampler=val_sampler, pin_memory=True, drop_last=False, num_workers=4, persistent_workers=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler, pin_memory=True, drop_last=drop_last, num_workers=1, persistent_workers=True)
+    test_dataloader = None
+    if len(val_dataset) > 0:
+      test_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, drop_last=False, num_workers=1, persistent_workers=True)
 
-    return train_dataloader, val_dataloader, train_sampler
+    return train_dataloader, test_dataloader, train_sampler
 
 
 

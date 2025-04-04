@@ -7,20 +7,24 @@ from .dataset import get_mod_arithmetic_cp_dataloaders
 
 @dataclass
 class ArithmeticTrainRunConfig(TrainConfig):
-  val_frac: float = 0.7  # Fraction of data to use for validation
+  train_frac: float = 0.3
 
 
 class ArithmeticTrainer(Trainer[ArithmeticTrainRunConfig]):
   def __init__(self, c: ArithmeticTrainRunConfig):
+    self.metadata = dict(
+      train_frac=c.train_frac,
+    )
     super().__init__(c)
   
   def get_data(self, c, rank=None, get_val_data=True):
     train_dataloader, val_dataloader, train_sampler = get_mod_arithmetic_cp_dataloaders(
       data_config=c.data_config,
-      val_frac=c.val_frac,
+      train_frac=c.train_frac,
       batch_size=c.batch_size,
-      world_size=c.world_size,
+      world_size=self.world_size,
       rank=rank,
+      drop_last=False
     )
     
     if get_val_data:

@@ -12,6 +12,10 @@ neptune
 
 pillow
 pandas
+pydantic
 
 ipython>=8.0.0,<9.0.0
 ipykernel
+
+# cryptography==41.0.1
+# cffi

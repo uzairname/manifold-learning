@@ -21,7 +21,7 @@ class TrainConfig:
  
   # hyperparameters
   n_epochs: int = 1
-  batch_size: int = 64
+  batch_size: int = 1
   get_optimizer: Optional[Callable] = None
   learning_rate: float = 1e-3
   weight_decay: float = 0
@@ -33,25 +33,23 @@ class TrainConfig:
 
   # multiprocessing
   max_gpus: int = None
-  distributed: bool = True
-  world_size: int = None
 
   # checkpointing
-  checkpoint_base_dir: str = MODELS_DIR
+  checkpoints_base_dir: str = MODELS_DIR
+  model_name: Optional[str] = None
+  checkpoint_dir: Optional[str] = None # If set to None, no checkpoints will be saved
   n_evals: int = 64
   n_checkpoints: int = 0
   save_method: Literal["state_dict", "trace", "script"] = "state_dict"
-  checkpoint_dir: str = "checkpoints"
 
   # logging
   log: bool = True
   experiment_group: Optional[str] = None
-  model_name: Optional[str] = None
   notes: Optional[str] = None
   tags: Optional[list[str]] = None
   
   
-TC = TypeVar('TrainConfig', bound=TrainConfig, default=TrainConfig, covariant=True)
+TC = TypeVar('TrainConfig', bound=TrainConfig, covariant=True)
 
 
 @dataclass
@@ -69,7 +67,7 @@ class TrainRunState:
   total_steps: int
   eval_frequency: int
   checkpoint_steps: list
-  checkpoint_dir: str
+  checkpoint_dir: Optional[str] = None # If set to None, no checkpoints will be saved
 
   t: tqdm = None
   step: int = 0

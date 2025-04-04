@@ -1,4 +1,6 @@
 import os, errno, math
+import functools
+from typing import Callable, TypeVar
 
 def silentremove(filename):
     try:
@@ -43,3 +45,19 @@ def is_prime(number):
             return False
     return True
 
+
+T = TypeVar('T')
+
+def iife(func: Callable[[], T]) -> T:
+    """
+    Decorator to turn a function into an immediately invoked function expression (IIFE).
+    Example usage:
+    @iife
+    def my_function():
+        # Your code here
+        return result
+        
+    result = my_function
+    
+    """
+    return func()

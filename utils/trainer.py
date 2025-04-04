@@ -1,8 +1,6 @@
 from abc import abstractmethod, ABC
-from typing import Tuple, Generic, TypeVar, List
-from dataclasses import asdict
+from typing import Tuple, Generic, List
 from functools import partial
-import json
 import logging
 import os
 
@@ -12,22 +10,18 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import numpy as np
 
-import neptune
-import psutil
-from neptune.utils import stringify_unsupported
 from tqdm import tqdm
 
-from utils.data_types import TC, TrainRunState, TrainConfig
+from utils.data_types import TC, TrainRunState
 from utils.logger import TrainRunLogger
 from utils.multiprocessing import process_group_cleanup, process_group_setup
-from utils.helpers import eval_model, set_all_seeds, copy_model
+from utils.helpers import set_all_seeds
 from utils.logging import setup_logging
-from utils.utils import mkdir_empty
 
 
 class Trainer(ABC, Generic[TC]):
 
-  def __init__(self, train_config: TC):
+  def __init__(self, c: TC):
     """
     Class for training a model. Handles distributed training, logging, and saving checkpoints.
     
@@ -35,14 +29,18 @@ class Trainer(ABC, Generic[TC]):
       TC: The type of the training configuration, which must inherit from `TrainConfig`.
 
     Args:
-      train_config (TC): The object containing all hyperparameters and settings for training.
+      c (TC): The object containing all hyperparameters and settings for training.
 
     Attributes:
       c (TC): The training configuration object.
       run (neptune.Run): Placeholder for a neptune.ai training run to log to, initialized as None.
     """
 
-    self.c = train_config
+    self.c = c
+    max_gpus = torch.cuda.device_count() if c.max_gpus is None else c.max_gpus
+    self.world_size = min(max_gpus, torch.cuda.device_count())
+    self.distributed = self.world_size > 1
+    self.metadata = {}
     self.logger = TrainRunLogger(self)
   
   def train(self):
@@ -55,32 +53,30 @@ class Trainer(ABC, Generic[TC]):
     set_all_seeds()
     torch.cuda.empty_cache()
     torch.autograd.set_detect_anomaly(True)
-    self.run = None
     
     # Determine the world size based on config and gpus available
-    c.world_size = min(c.max_gpus or torch.cuda.device_count(), torch.cuda.device_count())
-    c.distributed = c.world_size > 1
+    
     
     # Set model partial and run name
     c.model_partial = partial(c.model_class, **(c.model_params or {}))
     c.model_name = c.model_name or c.model_class.__name__
 
-    print(f"Training model {c.model_name} with {c.world_size} GPUs")
+    print(f"Training model {c.model_name} with {self.world_size} GPUs")
 
-    if c.distributed:
-      mp.spawn(self.train_process, args=(c,), nprocs=c.world_size, join=True)
+    if self.distributed:
+      mp.spawn(self.train_process, args=(c,), nprocs=self.world_size, join=True)
     else:
       setup_logging()
       self._train(c)
-    if self.run is not None:
-      self.run.stop()
+    if self.logger.run is not None:
+      self.logger.run.stop()  # Stop the Neptune run if it was started
 
     print('Done training')
 
 
   def train_process(self, rank, c: TC):
     try:
-      process_group_setup(rank, c.world_size)
+      process_group_setup(rank, self.world_size)
       self._train(c, rank)
     except Exception as e:
       logging.error(f"Error in rank {rank}:")
@@ -135,8 +131,8 @@ class Trainer(ABC, Generic[TC]):
     """
     
     # Device
-    is_primary = rank == 0 or not c.distributed
-    if c.distributed:
+    is_primary = rank == 0 or not self.distributed
+    if self.distributed:
       device = torch.device(f"cuda:{rank}")
     else:
       device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -148,7 +144,7 @@ class Trainer(ABC, Generic[TC]):
     model = c.model_partial().to(device)
     model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
-    if c.distributed:
+    if self.distributed:
       training_model = nn.parallel.DistributedDataParallel(model, device_ids=[rank])
     else:
       training_model = model
@@ -175,7 +171,7 @@ class Trainer(ABC, Generic[TC]):
       total_steps=total_steps,
       eval_frequency=None if not c.n_evals else max((total_steps // c.n_evals, 1)),
       checkpoint_steps=np.linspace(0, total_steps-1, c.n_checkpoints).astype(int).tolist(),
-      checkpoint_dir=os.path.join(c.checkpoint_base_dir, c.model_name, c.checkpoint_dir),
+      checkpoint_dir=os.path.join(c.checkpoints_base_dir, c.model_name, c.checkpoint_dir) if c.checkpoint_dir else None,
     )
     self.logger.setup_tracking(s, c)
 
@@ -183,7 +179,7 @@ class Trainer(ABC, Generic[TC]):
       s.t = t
       for epoch in range(c.n_epochs):
         s.epoch = epoch
-        if c.distributed:
+        if self.distributed:
           train_sampler.set_epoch(epoch)
         for i, batch in enumerate(train_dataloader):
             s.batch_idx = i
@@ -201,7 +197,7 @@ class Trainer(ABC, Generic[TC]):
               loss = criterion(pred, y)
 
             loss_tensor = loss.clone().detach()
-            if c.distributed:
+            if self.distributed:
               dist.all_reduce(loss_tensor, op=dist.ReduceOp.AVG)
             s.running_loss += loss_tensor.item()
 
@@ -209,7 +205,7 @@ class Trainer(ABC, Generic[TC]):
             scaler.unscale_(optimizer)
             
             if is_primary and (s.step % 16 == 0):
-              self.logger.log_norms(s, self.run)
+              self.logger.log_norms(s)
 
             torch.nn.utils.clip_grad_norm_(training_model.parameters(), 0.2)
             scaler.step(optimizer)

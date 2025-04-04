@@ -5,24 +5,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from models.transformer import Transformer
-from tasks.arithmetic import ArithmeticDatasetConfig, ArithmeticTrainRunConfig, ArithmeticTrainer
+from tasks.arithmetic import ArithmeticDatasetConfig, ArithmeticTrainRunConfig
 from utils.helpers import CrossEntropyHighPrecision
+from utils.utils import iife
 
-
-if __name__ == "__main__":
-  
+"""
+Configuration to train a standard mod arithmetic transformer, same setup as the paper. runs to 20k epochs
+results: No loss spikes, grokking behavior, final train loss 4e-8
+"""
+@iife
+def baseline():
   p = 113
-  val_frac = 0.7
-  n_gpus = 4
-  data_size = (int(p ** 2 * (1 - val_frac)) // n_gpus)
-  d_model=32
-
-  config = ArithmeticTrainRunConfig(
+  d_model = 128
+  return ArithmeticTrainRunConfig(
     model_name=f"arithmetic_transformer",
-    checkpoint_dir=f'p{p}_d{d_model}_fb_ce',
     model_class=Transformer,
     model_params=dict(
-      d_model=d_model,
+      d_model=128,
       d_mlp=d_model * 4,
       n_vocab=p+1,
       max_seq_len=3,
@@ -33,18 +32,14 @@ if __name__ == "__main__":
     ),
     data_config=ArithmeticDatasetConfig(
       p=p,
-      noise_frac=0.0,
+      noise_frac=0.0
     ),
-    batch_size=512, # Full batch training
-    learning_rate=1e-3*4, # Multiply by num of GPUs
+    batch_size=512,
+    learning_rate=1e-3,
     weight_decay=1e-0,
     n_epochs=20000,
     criterion=CrossEntropyHighPrecision(),
     n_evals=128,
     n_checkpoints=32,
-    
-    val_frac=val_frac,
+    train_frac=0.3,
   )
-  
-  trainer = ArithmeticTrainer(config)
-  trainer.train()

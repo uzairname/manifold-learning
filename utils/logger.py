@@ -1,4 +1,7 @@
-from typing import Callable, Any, Tuple
+from typing import TYPE_CHECKING, Generic
+if TYPE_CHECKING:
+  from trainer import Trainer  # Avoid circular import
+
 import os
 from dataclasses import asdict
 from functools import partial
@@ -14,13 +17,12 @@ from neptune.utils import stringify_unsupported
 
 from utils.data_types import TC, TrainRunState
 from utils.helpers import eval_model
-from utils.trainer import Trainer
 from utils.utils import mkdir_empty
 
 
-class TrainRunLogger:
+class TrainRunLogger(Generic[TC]):
   
-  def __init__(self, trainer: Trainer):
+  def __init__(self, trainer: 'Trainer'):
     """
     Utility functions for the Trainer class to handle logging and saving checkpoints durig a training run
     """
@@ -43,6 +45,7 @@ class TrainRunLogger:
       s (TrainRunState): The current state of the training run.
       c (TC): The training configuration object.
     """
+
     approx_unique_samples = len(s.train_dataloader.dataset) * c.batch_size
 
     if c.log and s.is_primary:
@@ -52,36 +55,27 @@ class TrainRunLogger:
         api_token=os.getenv("NEPTUNE_API_TOKEN"),
       )
 
-      config = {
-        "group": c.experiment_group,
-        "name": c.model_name,
-        "label": c.checkpoint_dir,
-        "data_config": asdict(c.data_config) if c.data_config is not None else None,
-        "n_params": sum(p.numel() for p in s.model.parameters()),
-        "model_params": c.model_params,
-        "learning-rate": c.learning_rate,
-        "weight-decay": c.weight_decay,
-        "n-epochs": c.n_epochs,
-        "batch-size": c.batch_size,
-        "loss-fn": c.criterion.__class__.__name__,
-        "checkpoint-dir": s.checkpoint_dir,
-      }
-
-      self.run['config'] = stringify_unsupported(config)
+      self.run['config'] = stringify_unsupported(dict(
+        n_params=sum(p.numel() for p in s.model.parameters()),
+        **asdict(c)
+      ))
 
       logging.info(f"Total steps: {s.total_steps}")
       logging.info(f"~{approx_unique_samples} samples, {c.n_epochs} epochs")
 
       # Checkpoints
-      mkdir_empty(s.checkpoint_dir)
-      if c.save_method == "state_dict":
-        with open(os.path.join(s.checkpoint_dir, "model_params.json"), "w") as f:
-          json.dump({
-            "data_config": asdict(c.data_config) if c.data_config is not None else None,
-            "model_params": c.model_params,
-          }, f, indent=4)
+      if s.checkpoint_dir is not None:
+        mkdir_empty(s.checkpoint_dir)
+        if c.save_method == "state_dict":
+          with open(os.path.join(s.checkpoint_dir, "model_params.json"), "w") as f:
+            json.dump({
+              "data_config": asdict(c.data_config) if c.data_config is not None else None,
+              "model_params": c.model_params,
+            }, f, indent=4)
 
-      logging.info(f"Saving model checkpoints to {s.checkpoint_dir}")
+        logging.info(f"Saving model checkpoints to {s.checkpoint_dir}")
+      else:
+        logging.info("checkpoint_dir is None. No checkpoints will be saved")
 
 
   def log_metrics(
@@ -99,6 +93,7 @@ class TrainRunLogger:
       s (TrainRunState): The current state of the training run.
       c (TC): The training configuration object.
     """
+
     if not s.is_primary:
       # Avoid duplicate logs in distributed training
       return
@@ -107,7 +102,7 @@ class TrainRunLogger:
       mem = psutil.virtual_memory()
       avg_loss = s.running_loss / 16
       s.t.set_description_str(f"Loss={avg_loss:.5f}" + (f" Val Loss={s.val_loss:.5f}" if s.val_loss is not None else ""))
-      s.t.set_postfix(epoch=f"{s.epoch}/{c.n_epochs}", batch=f"{s.batch_idx}/{len(s.train_dataloader)}", gpus=f"{c.world_size}", mem=f"{mem.percent:.2f}%")
+      s.t.set_postfix(epoch=f"{s.epoch}/{c.n_epochs}", batch=f"{s.batch_idx}/{len(s.train_dataloader)}", gpus=f"{self.trainer.world_size}", mem=f"{mem.percent:.2f}%")
 
       if self.run is not None:
         self.run['train/train_loss'].append(
@@ -130,7 +125,7 @@ class TrainRunLogger:
       self.save_checkpoint(s, c)
 
 
-  def log_norms(self, s: TrainRunState, run: neptune.Run):
+  def log_norms(self, s: TrainRunState):
     """
     Logs the weight norms and gradient norms of the model.
 
@@ -141,6 +136,7 @@ class TrainRunLogger:
       s (TrainRunState): The current state of the training run.
       run (neptune.Run): The Neptune run object for logging metrics.
     """
+
     norms = []
 
     for name, param in s.model.named_parameters():
@@ -163,17 +159,17 @@ class TrainRunLogger:
         grad_norms.append(grad_norm)
     grad_norms = np.array(grad_norms)
 
-    if run is not None:
-      run['train/grad_norms/std'].append(value=np.std(grad_norms), step=s.step)
-      run['train/grad_norms/mean'].append(value=np.mean(grad_norms), step=s.step)
-      run['train/grad_norms/max'].append(value=np.max(grad_norms), step=s.step)
+    if self.run is not None:
+      self.run['train/grad_norms/std'].append(value=np.std(grad_norms), step=s.step)
+      self.run['train/grad_norms/mean'].append(value=np.mean(grad_norms), step=s.step)
+      self.run['train/grad_norms/max'].append(value=np.max(grad_norms), step=s.step)
       if mean_norm is not None:
-        run['train/weight_norms/mean'].append(value=mean_norm, step=s.step)
+        self.run['train/weight_norms/mean'].append(value=mean_norm, step=s.step)
 
 
   def eval_model(self, c: TC, s: TrainRunState) -> float:
     """
-    Evaluates the model using the configured model, val dataset, and criterion
+    Evaluates the model using the configured val dataset and criterion
 
     Args:
       c (TC): The training configuration object.
@@ -197,24 +193,32 @@ class TrainRunLogger:
     Can save model as a TorchScript or state dict based on the configuration.
     Also stores metadata about the checkpoint in a JSON file.
     """
-    if not s.is_primary:
+
+    if not s.is_primary or s.checkpoint_dir is None:
       # Avoid duplicate saves in distributed training
       return
+    
+    # Determine file names
+    checkpoint_name = s.checkpoint_num
+    if s.checkpoint_num >= c.n_checkpoints:
+      checkpoint_name = 'final'
+  
+    model_path = os.path.join(s.checkpoint_dir, f"{checkpoint_name}.pt")
+    info_path = os.path.join(s.checkpoint_dir, f"{checkpoint_name}.json")
 
     # Save model
-    path = os.path.join(s.checkpoint_dir, f"{s.checkpoint_num}.pt")
     s.model.eval()
     if c.save_method == "script":
       scripted_model = torch.jit.script(s.model)
-      torch.jit.save(scripted_model, path)
+      torch.jit.save(scripted_model, model_path)
     elif c.save_method == "state_dict":
-      torch.save(s.model.state_dict(), path)
+      torch.save(s.model.state_dict(), model_path)
     else:
       raise ValueError(f"Unknown save method {c.save_method}")
 
     # Record checkpoint info
     val_loss = self.eval_model(c, s)
-    with open(os.path.join(s.checkpoint_dir, f"{s.checkpoint_num}.json"), "w") as f:
+    with open(info_path, "w") as f:
       json.dump({
         "step": s.step,
         "epoch": s.epoch,
