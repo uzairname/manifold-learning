@@ -38,49 +38,7 @@ def load_model_script(
     return model
 
 
-<<<<<<< Updated upstream:tasks/clock/vis.py
 def print_model_parameters(model: nn.Module, details=False):
-=======
-def load_model_state_dict(
-  model_class: nn.Module,
-  img_size=128,
-  latent_dim=2,
-  model_params:dict=None,
-  postfix='',
-  name='model',
-  checkpoint=None
-):
-  """
-  Loads a clock model by state dict and architecture
-  """
-  
-  model_dir = f"{latent_dim}-i{img_size}-{postfix}"
-  
-  if checkpoint is None:
-    model_path = os.path.join(MODELS_DIR, name, model_dir, f"final.pt")
-  else:
-    model_path = os.path.join(MODELS_DIR, name, model_dir, f"{checkpoint}.pt")
-  
-  if not model_params:
-    # load model args from json
-    with open(os.path.join(MODELS_DIR, name, model_dir, 'model_params.json'), 'r') as f:
-      model_params = json.load(f).get('model_params', {})
-  
-  model = model_class(**model_params).to(device)
-  state_dict = torch.load(model_path, map_location=device)
-  
-  if 'model' in state_dict:
-    state_dict = state_dict['model']
-  
-  model.load_state_dict(state_dict)
-  model.eval()
-  
-  return model
-
-
-
-def print_model_parameters(cls: nn.Module, details=False):
->>>>>>> Stashed changes:autoencoder/vis.py
   
     model.eval()
 
@@ -99,50 +57,16 @@ def print_model_parameters(cls: nn.Module, details=False):
     print(f"{'Total Trainable Parameters':<40}{total_params:>15,}")
 
 
-<<<<<<< Updated upstream:tasks/clock/vis.py
 def get_outputs(cp: ModelCheckpoint, limit=None):
-=======
-def get_outputs(type_: typing.Literal['encoder', 'autoencoder', 'decoder'], model, dataloader, latent_dim=2, limit=None):
->>>>>>> Stashed changes:autoencoder/vis.py
   """
   yields:
     - image, label1d, label2d, latent, reconstructed
   """
-  total_generated = 0
   with torch.no_grad():
-<<<<<<< Updated upstream:tasks/clock/vis.py
     for noisy_img, img, label1d, label2d, out in map_inputs(cp, cp.model.forward, limit=limit):
       latent = out if cp.type != 'decoder' else None
       reconstructed = out if cp.type != 'encoder' else None
       yield noisy_img, img, label1d, label2d, latent, reconstructed
-=======
-    for noisy_imgs, clean_imgs, label2d, label1d in dataloader:
-      noisy_imgs = noisy_imgs.to(device)
-      images = clean_imgs.to(device)
-      label1d = label1d.to(device)
-      label2d = label2d.to(device)
-      
-      latents = None
-      reconstructeds = None
-      if type_ == 'encoder':
-        latents = model.forward(images)
-      
-      if type_ == 'autoencoder':
-        latents = model.encoder(images)
-        reconstructeds = model.forward(images)
-
-      elif type_ == 'decoder':
-        reconstructeds = model.forward(label1d.unsqueeze(1) if latent_dim == 1 else label2d)
-      
-      
-      for i in range(images.size(0)):
-        latent = latents[i] if latents is not None else None
-        reconstructed = reconstructeds[i] if reconstructeds is not None else None
-        yield noisy_imgs[i], images[i], label1d[i], label2d[i], latent, reconstructed
-        total_generated += 1
-        if limit is not None and total_generated >= limit:
-          return
->>>>>>> Stashed changes:autoencoder/vis.py
 
 
 def map_inputs(cp: ModelCheckpoint, forward_fn: typing.Callable, limit=None):
@@ -177,13 +101,7 @@ def map_inputs(cp: ModelCheckpoint, forward_fn: typing.Callable, limit=None):
   
 
 
-<<<<<<< Updated upstream:tasks/clock/vis.py
 def show_data(dataset: Dataset, device=device):
-=======
-
-
-def show_data(dataloader: DataLoader, device=device):
->>>>>>> Stashed changes:autoencoder/vis.py
   
   # visualize 16 images
   fig, axs = plt.subplots(8, 8, figsize=(10, 12))
@@ -321,11 +239,7 @@ def visualize_latent(cp: ModelCheckpoint):
   # Get a batch of model outputs
   latents = []
   labels1d = []
-<<<<<<< Updated upstream:tasks/clock/vis.py
   for i, (_, _, label1d, _, latent, _) in enumerate(get_outputs(cp)):
-=======
-  for i, (_, _, label1d, _, latent, _) in enumerate(get_outputs(type_, model, dataloader)):
->>>>>>> Stashed changes:autoencoder/vis.py
     if i >= 4000:
       break
     latents.append(latent.unsqueeze(0).cpu())

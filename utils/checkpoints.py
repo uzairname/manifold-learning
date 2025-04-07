@@ -8,18 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from .dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
-
-
-@dataclass
-class ModelCheckpoint:
-  model: nn.Module
-  dataloader: DataLoader
-  id: Optional[str] = None
-  step: Optional[int] = None
-  epoch: Optional[int] = None
-  val_loss: Optional[float] = None
-
+from ..tasks.arithmetic.dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
 
 
 class CheckpointMetadata(BaseModel):
@@ -29,9 +18,20 @@ class CheckpointMetadata(BaseModel):
   batch: Optional[int] = None
 
 
+@dataclass
+class ModelCheckpoint:
+  model: nn.Module
+  dataloader: DataLoader
+  id: Optional[str] = None
+  data: Optional[CheckpointMetadata]
+
+
+
+
 
 def load_model_checkpoint(
   model_class: nn.Module,
+  get_dataloaders: Callable[[], Tuple[DataLoader, DataLoader, Optional[torch.utils.data.Sampler]]],
   checkpoint_dir: str,
   checkpoint=None,
   device='cuda',
@@ -53,12 +53,11 @@ def load_model_checkpoint(
     run_data = json.load(f)
     model_params = run_data.get('model_params', {})
     data_config_dict = run_data['data_config']
-    data_config = ArithmeticDatasetConfig(**data_config_dict)
     
   with open(info_path, 'r') as f:
     metadata = CheckpointMetadata.model_validate(json.load(f))
 
-  dataloader, _, _ = get_mod_arithmetic_cp_dataloaders(data_config=data_config, batch_size=batch_size)
+  dataloader, _, _ = get_dataloaders(data_config=data_config_dict, batch_size=batch_size)
 
   model = model_class(**model_params).to(device)
 
@@ -69,9 +68,7 @@ def load_model_checkpoint(
     model=model,
     dataloader=dataloader,
     id=checkpoint_name,
-    step=metadata.step,
-    epoch=metadata.epoch,
-    val_loss=metadata.val_loss,
+    data=metadata
   )
   
 __all__ = [

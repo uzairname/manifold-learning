@@ -14,10 +14,10 @@ if __name__ == "__main__":
 
     c = run_configs.baseline
     c.experiment_group = "train-frac-sweep"
+    c.n_evals = 512
     
-    for train_frac in np.arange(0.2, 0.8, 0.1):
+    for train_frac in np.arange(0.4, 0.9, 0.05)**2:
       c.train_frac = train_frac
-      c.n_checkpoints = 2
 
       trainer = ArithmeticTrainer(c)
       trainer.train()

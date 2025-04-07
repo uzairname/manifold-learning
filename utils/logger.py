@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING, Generic
 if TYPE_CHECKING:
-  from trainer import Trainer  # Avoid circular import
+  from .trainer import Trainer  # Avoid circular import
 
 import os
 from dataclasses import asdict
@@ -43,7 +43,7 @@ class TrainRunLogger(Generic[TC]):
 
     Args:
       s (TrainRunState): The current state of the training run.
-      c (TC): The training configuration object.
+      c (TrainConfig): The training configuration.
     """
 
     approx_unique_samples = len(s.train_dataloader.dataset) * c.batch_size
@@ -91,7 +91,7 @@ class TrainRunLogger(Generic[TC]):
 
     Args:
       s (TrainRunState): The current state of the training run.
-      c (TC): The training configuration object.
+      c (TrainConfig): The training configuration.
     """
 
     if not s.is_primary:
@@ -113,7 +113,7 @@ class TrainRunLogger(Generic[TC]):
 
     # Evaluate the model
     if s.eval_frequency and (s.step % s.eval_frequency == 0):
-      s.val_loss = self.eval_model(c, s)
+      s.val_loss = self.eval_model(s, c)
       if self.run is not None:
         self.run["train/val_loss"].append(
           value=s.val_loss,
@@ -134,7 +134,6 @@ class TrainRunLogger(Generic[TC]):
 
     Args:
       s (TrainRunState): The current state of the training run.
-      run (neptune.Run): The Neptune run object for logging metrics.
     """
 
     norms = []
@@ -167,19 +166,18 @@ class TrainRunLogger(Generic[TC]):
         self.run['train/weight_norms/mean'].append(value=mean_norm, step=s.step)
 
 
-  def eval_model(self, c: TC, s: TrainRunState) -> float:
+  def eval_model(self, s: TrainRunState, c: TC) -> float:
     """
     Evaluates the model using the configured val dataset and criterion
 
     Args:
-      c (TC): The training configuration object.
       s (TrainRunState): The current state of the training run.
-      get_inputs_labels (Callable): A function to get inputs and labels from the dataset.
+      c (TrainConfig): The training configuration.
 
     Returns:
       float: The validation loss.
     """
-    return eval_model(s.model, c.criterion, s.val_data, s.device, partial(self.trainer.get_inputs_labels, s=s, c=c))
+    return eval_model(s.model, c.criterion, s.val_data, s.device, partial(self.trainer.get_inputs_labels))
 
 
   def save_checkpoint(
@@ -192,6 +190,10 @@ class TrainRunLogger(Generic[TC]):
     
     Can save model as a TorchScript or state dict based on the configuration.
     Also stores metadata about the checkpoint in a JSON file.
+    
+    Args:
+      s (TrainRunState): The current state of the training run.
+      c (TrainConfig): The training configuration.
     """
 
     if not s.is_primary or s.checkpoint_dir is None:
@@ -217,7 +219,7 @@ class TrainRunLogger(Generic[TC]):
       raise ValueError(f"Unknown save method {c.save_method}")
 
     # Record checkpoint info
-    val_loss = self.eval_model(c, s)
+    val_loss = self.eval_model(s, c)
     with open(info_path, "w") as f:
       json.dump({
         "step": s.step,

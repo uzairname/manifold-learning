@@ -187,7 +187,7 @@ class Trainer(ABC, Generic[TC]):
             self.logger.log_metrics(s, c)
 
             # Optimization step
-            x, y = self.get_inputs_labels(batch, s, c)
+            x, y = self.get_inputs_labels(batch)
             x = x.to(device)
             y = y.to(device)
 

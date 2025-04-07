@@ -34,7 +34,7 @@ class ArithmeticTrainer(Trainer[ArithmeticTrainRunConfig]):
       
     return train_dataloader, val_data, train_sampler
   
-  def get_inputs_labels(self, batch, s, c):
+  def get_inputs_labels(self, batch):
     x, y_int, y_one_hot = batch
     return x, y_int
   

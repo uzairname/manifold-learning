@@ -35,7 +35,7 @@ class ConvINRAutoencoder(nn.Module):
 
 class MLPAutoencoder(nn.Module):
   
-  def __init__(self, encoder_dims=[1, 1], decoder_dims=[1, 1], decoder_activation: ActivationType='sigmoid'):
+  def __init__(self, encoder_dims=[1, 1], decoder_dims=[1, 1], decoder_activation: ActivationType=ActivationType.sigmoid):
     super(MLPAutoencoder, self).__init__()
 
     self.encoder = MLP(dims=encoder_dims)
