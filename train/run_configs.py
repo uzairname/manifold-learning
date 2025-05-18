@@ -42,4 +42,5 @@ def baseline():
     n_evals=128,
     n_checkpoints=32,
     train_frac=0.3,
+    checkpoint_dir="baseline"
   )

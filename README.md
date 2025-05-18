@@ -1,8 +1,10 @@
-Create conda environment
+Reproducing https://openreview.net/pdf?id=9XFSbDPmdW
 
-```bash
-conda env create -f environment.yml
-conda activate ml_env
-```
+The "Arithmetic" task in tasks/arithmetic is the same model trained in the paper. I observe the same loss curve exhibiting grokking behavior.
 
-experiments in grokking, manifold learning, and interpretability
+---
+
+Manifold learning on a synthetic dataset
+
+The "Clock" task in tasks/clock trains an autoencoder on images of clocks with an hour and minute hand. The data is represented as a one dimensional manifold which develops folds and fractal-like structure as reconstruction loss decreases.
+

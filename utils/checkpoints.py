@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from ..tasks.arithmetic.dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
+from tasks.arithmetic.dataset import ArithmeticDatasetConfig, get_mod_arithmetic_cp_dataloaders
 
 
 class CheckpointMetadata(BaseModel):
@@ -17,14 +17,12 @@ class CheckpointMetadata(BaseModel):
   val_loss: Optional[float] = None
   batch: Optional[int] = None
 
-
 @dataclass
 class ModelCheckpoint:
   model: nn.Module
   dataloader: DataLoader
   id: Optional[str] = None
-  data: Optional[CheckpointMetadata]
-
+  data: Optional[CheckpointMetadata] = None
 
 
 
